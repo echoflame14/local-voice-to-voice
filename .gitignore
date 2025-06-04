@@ -76,4 +76,7 @@ checkpoints/
 test_output/
 .coverage
 htmlcov/
-.pytest_cache/ 
+.pytest_cache/
+
+# Dependencies
+chatterbox/ 
