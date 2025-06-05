@@ -20,6 +20,7 @@ from .conversation_summarizer import ConversationSummarizer
 from .hierarchical_memory_manager import HierarchicalMemoryManager, NUM_CONV_SUMMARIES_FOR_STM, NUM_STM_FOR_LTM
 from ..utils.text_similarity import is_similar_text
 from ..utils.text_cleaner import clean_text_for_tts
+from ..config import VoiceAssistantConfig
 
 
 class VoiceAssistant:
@@ -27,44 +28,33 @@ class VoiceAssistant:
     
     def __init__(
         self,
-        # STT settings
+        config: Optional[VoiceAssistantConfig] = None,
+        # Legacy parameters for backward compatibility
         whisper_model_size: str = "base",
         whisper_device: str = None,
-        
-        # LLM settings
-        use_gemini: bool = True,  # NEW: Toggle for Gemini vs LM Studio
+        use_gemini: bool = True,
         llm_base_url: str = "http://localhost:1234/v1",
         llm_api_key: str = "not-needed",
         gemini_api_key: str = None,
         gemini_model: str = "models/gemini-1.5-flash",
         system_prompt: str = None,
-        
-        # TTS settings
         tts_device: str = None,
         voice_reference_path: Optional[str] = None,
         voice_exaggeration: float = 0.5,
         voice_cfg_weight: float = 0.5,
         voice_temperature: float = 0.8,
-        
-        # Audio settings
         sample_rate: int = 16000,
         chunk_size: int = 1024,
-        min_audio_amplitude: float = 0.015,  # Minimum amplitude threshold
-        
-        # Input mode settings  
-        input_mode: str = "vad",  # "vad" or "push_to_talk"
+        min_audio_amplitude: float = 0.015,
+        input_mode: str = "vad",
         vad_aggressiveness: int = 1,
         vad_speech_threshold: float = 0.3,
         vad_silence_threshold: float = 0.8,
         push_to_talk_key: str = "space",
-        
-        # Sound Effects settings
         enable_sound_effects: bool = True,
         sound_effect_volume: float = 0.2,
         enable_interruption_sound: bool = True,
         enable_generation_sound: bool = True,
-        
-        # Conversation settings
         max_response_tokens: int = 5000,
         llm_temperature: float = 1,
         log_conversations: bool = True,
@@ -74,65 +64,113 @@ class VoiceAssistant:
         max_summaries_to_load: int = 2000
     ):
         """Initialize Voice Assistant"""
-        self.sample_rate = sample_rate
-        self.chunk_size = chunk_size
-        self.max_response_tokens = max_response_tokens
-        self.llm_temperature = llm_temperature
-        self.min_audio_amplitude = min_audio_amplitude
+        # Handle configuration - support both new config object and legacy parameters
+        if config is None:
+            # Create config from legacy parameters for backward compatibility
+            config = VoiceAssistantConfig.create_from_legacy_params(
+                whisper_model_size=whisper_model_size,
+                whisper_device=whisper_device,
+                use_gemini=use_gemini,
+                llm_base_url=llm_base_url,
+                llm_api_key=llm_api_key,
+                gemini_api_key=gemini_api_key,
+                gemini_model=gemini_model,
+                system_prompt=system_prompt,
+                tts_device=tts_device,
+                voice_reference_path=voice_reference_path,
+                voice_exaggeration=voice_exaggeration,
+                voice_cfg_weight=voice_cfg_weight,
+                voice_temperature=voice_temperature,
+                sample_rate=sample_rate,
+                chunk_size=chunk_size,
+                min_audio_amplitude=min_audio_amplitude,
+                input_mode=input_mode,
+                vad_aggressiveness=vad_aggressiveness,
+                vad_speech_threshold=vad_speech_threshold,
+                vad_silence_threshold=vad_silence_threshold,
+                push_to_talk_key=push_to_talk_key,
+                enable_sound_effects=enable_sound_effects,
+                sound_effect_volume=sound_effect_volume,
+                enable_interruption_sound=enable_interruption_sound,
+                enable_generation_sound=enable_generation_sound,
+                max_response_tokens=max_response_tokens,
+                llm_temperature=llm_temperature,
+                log_conversations=log_conversations,
+                conversation_log_dir=conversation_log_dir,
+                max_history_messages=max_history_messages,
+                auto_summarize_conversations=auto_summarize_conversations,
+                max_summaries_to_load=max_summaries_to_load
+            )
+        
+        # Validate configuration
+        config.validate()
+        
+        # Store configuration
+        self.config = config
+        
+        # Quick access to frequently used values (for performance)
+        self.sample_rate = config.audio.sample_rate
+        self.chunk_size = config.audio.chunk_size
+        self.max_response_tokens = config.llm.max_response_tokens
+        self.llm_temperature = config.llm.temperature
+        self.min_audio_amplitude = config.audio.min_amplitude
         
         # Initialize components
         print("Initializing Voice Assistant components...")
         
         # STT
         print("Loading Whisper STT...")
-        self.stt = WhisperSTT(model_size=whisper_model_size, device=whisper_device)
+        self.stt = WhisperSTT(
+            model_size=config.stt.model_size, 
+            device=config.stt.device
+        )
         
         # LLM selection
-        if use_gemini and gemini_api_key:
+        if config.llm.use_gemini and config.llm.gemini_api_key:
             from ..llm import GeminiLLM
             print("Connecting to Gemini...")
             self.llm = GeminiLLM(
-                api_key=gemini_api_key,
-                model=gemini_model,
-                system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
+                api_key=config.llm.gemini_api_key,
+                model=config.llm.gemini_model,
+                system_prompt=config.llm.system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
             )
             self.use_gemini = True
         else:
             from ..llm import OpenAICompatibleLLM
             print("Connecting to LM Studio...")
             self.llm = OpenAICompatibleLLM(
-                base_url=llm_base_url,  # Use direct parameter
-                api_key=llm_api_key,    # Use direct parameter
+                base_url=config.llm.base_url,
+                api_key=config.llm.api_key,
                 model=None,
-                system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
+                system_prompt=config.llm.system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
             )
             self.use_gemini = False
         
-        # Store LLM choice for summarizer
-        self.gemini_api_key = gemini_api_key
-        self.gemini_model = gemini_model
-        self.llm_base_url = llm_base_url # Assignment remains for other parts of the class
-        self.llm_api_key = llm_api_key   # Assignment remains for other parts of the class
+        # Store LLM choice for summarizer (maintain compatibility with existing code)
+        self.gemini_api_key = config.llm.gemini_api_key
+        self.gemini_model = config.llm.gemini_model
+        self.llm_base_url = config.llm.base_url
+        self.llm_api_key = config.llm.api_key
         
         # TTS
         print("Loading Chatterbox TTS...")
         self.tts = ChatterboxTTSWrapper(
-            device=tts_device,
-            voice_reference_path=voice_reference_path,
-            exaggeration=voice_exaggeration,
-            cfg_weight=voice_cfg_weight,
-            temperature=voice_temperature
+            device=config.tts.device,
+            voice_reference_path=config.tts.voice_reference_path,
+            exaggeration=config.tts.exaggeration,
+            cfg_weight=config.tts.cfg_weight,
+            temperature=config.tts.temperature
         )
         
         # Audio manager with input mode support
         # Use VAD-optimized chunk size for best performance
-        vad_chunk_size = 480 if input_mode == "vad" else chunk_size
+        vad_chunk_size = 480 if config.input.mode == "vad" else config.audio.chunk_size
         self.audio_manager = AudioStreamManager(
-            sample_rate=sample_rate,
+            sample_rate=config.audio.sample_rate,
             chunk_size=vad_chunk_size,
             enable_performance_logging=True,
             list_devices_on_init=False,
-            input_mode=input_mode
+            input_mode=config.input.mode
         )
         
         # State management
@@ -180,38 +218,38 @@ class VoiceAssistant:
         self.on_synthesis_end: Optional[Callable] = None
         
         # Sound Effects settings
-        self.enable_sound_effects = enable_sound_effects
-        self.sound_effect_volume = sound_effect_volume
-        self.enable_interruption_sound = enable_interruption_sound
-        self.enable_generation_sound = enable_generation_sound
+        self.enable_sound_effects = config.sound_effects.enable_sound_effects
+        self.sound_effect_volume = config.sound_effects.sound_effect_volume
+        self.enable_interruption_sound = config.sound_effects.enable_interruption_sound
+        self.enable_generation_sound = config.sound_effects.enable_generation_sound
         
         # Conversation logging and summarization
-        self.log_conversations = log_conversations
-        self.auto_summarize = auto_summarize_conversations
-        self.max_summaries_to_load = max_summaries_to_load
+        self.log_conversations = config.conversation.log_conversations
+        self.auto_summarize = config.conversation.auto_summarize_conversations
+        self.max_summaries_to_load = config.conversation.max_summaries_to_load
         
-        if log_conversations:
-            self.conversation_logger = ConversationLogger(log_dir=conversation_log_dir)
+        if config.conversation.log_conversations:
+            self.conversation_logger = ConversationLogger(log_dir=config.conversation.conversation_log_dir)
             # Determine LLM for summarizer based on main LLM choice
             # Re-using the main LLM instance for summarization is generally not recommended
             # if it has a very specific system prompt or character.
             # It's better to use a dedicated summarization model or a general model with a summarization prompt.
             
             # Create a summarizer LLM using the same provider as the main LLM
-            from configs import config
-            if self.use_gemini and gemini_api_key:
+            from configs import config as app_config
+            if self.use_gemini and config.llm.gemini_api_key:
                 from ..llm import GeminiLLM
                 summarizer_llm = GeminiLLM(
-                    api_key=gemini_api_key,
-                    model=gemini_model,
-                    system_prompt=config.SUMMARIZER_SYSTEM_PROMPT
+                    api_key=config.llm.gemini_api_key,
+                    model=config.llm.gemini_model,
+                    system_prompt=app_config.SUMMARIZER_SYSTEM_PROMPT
                 )
             else:
                 summarizer_llm = OpenAICompatibleLLM(
-                    base_url=llm_base_url,    # Use direct parameter
-                    api_key=llm_api_key,      # Use direct parameter
-                    model=None,           # Changed "local-model" to None
-                    system_prompt=config.SUMMARIZER_SYSTEM_PROMPT
+                    base_url=config.llm.base_url,
+                    api_key=config.llm.api_key,
+                    model=None,
+                    system_prompt=app_config.SUMMARIZER_SYSTEM_PROMPT
                 )
             self.conversation_summarizer = ConversationSummarizer(summarizer_llm)
             self.hierarchical_memory_manager = HierarchicalMemoryManager(
@@ -221,7 +259,7 @@ class VoiceAssistant:
             self.conversation_logger.start_new_conversation()
             
             # Process any unsummarized conversations and update memory hierarchy
-            if auto_summarize_conversations: # This flag now implicitly covers hierarchical summarization
+            if config.conversation.auto_summarize_conversations: # This flag now implicitly covers hierarchical summarization
                 print("🚀 Initializing memory system: Processing unsummarized conversations and updating hierarchy...")
                 self._process_unsummarized_conversations() # Ensure all individual conversations are summarized first
                 self.hierarchical_memory_manager.update_memory_hierarchy() # Build STMs and LTMs
