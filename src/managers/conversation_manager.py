@@ -144,13 +144,15 @@ class ConversationManager:
         
         return False
     
-    def get_context_for_llm(self, user_text: str, max_memory_summaries: int = 5) -> List[Dict[str, str]]:
+    def get_context_for_llm(self, user_text: str, max_recent_summaries: int = 10, max_stm_summaries: int = 5, max_ltm_summaries: int = 5) -> List[Dict[str, str]]:
         """
         Get conversation context for LLM including memory hierarchy and recent history.
         
         Args:
             user_text: Current user input
-            max_memory_summaries: Maximum number of memory summaries to include
+            max_recent_summaries: Maximum number of recent conversation summaries to include (default: 10)
+            max_stm_summaries: Maximum number of Short-Term Memory summaries to include (default: 5)
+            max_ltm_summaries: Maximum number of Long-Term Memory summaries to include (default: 5)
             
         Returns:
             List of message dictionaries for LLM
@@ -163,7 +165,7 @@ class ConversationManager:
             self._process_unsummarized_conversations()
             
             # Get memory hierarchy content
-            memory_content = self._get_memory_hierarchy_content(max_memory_summaries)
+            memory_content = self._get_memory_hierarchy_content(max_recent_summaries, max_stm_summaries, max_ltm_summaries)
             if memory_content:
                 messages.append({
                     "role": "system",
@@ -179,40 +181,50 @@ class ConversationManager:
         
         return messages
     
-    def _get_memory_hierarchy_content(self, max_summaries: int) -> str:
+    def _get_memory_hierarchy_content(self, max_recent_summaries: int, max_stm_summaries: int, max_ltm_summaries: int) -> str:
         """Get memory hierarchy content for LLM context."""
         if not self.logger:
             return ""
         
         final_memory_parts = []
         
-        # Constants for memory limits
-        MAX_LTMS = 1
-        MAX_STMS = max(1, max_summaries // 3)
-        MAX_SUMMARIES = max_summaries - MAX_LTMS - MAX_STMS
-        
-        # Add Long-Term Memory summaries
-        latest_ltm_list = self.logger.get_latest_ltm_summaries(max_ltm_summaries=MAX_LTMS)
-        for ltm in latest_ltm_list:
-            final_memory_parts.append(f"[Long-Term Memory]:\n{ltm['content'].strip()}")
+        # Add Long-Term Memory summaries (most important, so put first)
+        print(f"🧠 Loading {max_ltm_summaries} Long-Term Memory summaries...")
+        latest_ltm_list = self.logger.get_latest_ltm_summaries(max_ltm_summaries=max_ltm_summaries)
+        for i, ltm in enumerate(latest_ltm_list[:max_ltm_summaries]):
+            final_memory_parts.append(f"[Long-Term Memory #{i+1}]:\n{ltm['content'].strip()}")
+        print(f"✅ Added {len(latest_ltm_list[:max_ltm_summaries])} LTM summaries to context")
         
         # Add Short-Term Memory summaries
-        stms = self.logger.get_latest_stm_summaries(max_stm_summaries=MAX_STMS * 2)
-        for stm in stms[:MAX_STMS]:
-            final_memory_parts.append(f"[Short-Term Memory]:\n{stm['content'].strip()}")
+        print(f"🧠 Loading {max_stm_summaries} Short-Term Memory summaries...")
+        stms = self.logger.get_latest_stm_summaries(max_stm_summaries=max_stm_summaries * 2)  # Get extra to have options
+        stm_count = 0
+        for stm in stms:
+            if stm_count >= max_stm_summaries:
+                break
+            final_memory_parts.append(f"[Short-Term Memory #{stm_count+1}]:\n{stm['content'].strip()}")
+            stm_count += 1
+        print(f"✅ Added {stm_count} STM summaries to context")
         
-        # Add recent conversation summaries
-        summaries = self.logger.get_latest_summaries(max_summaries=MAX_SUMMARIES * 2)
+        # Add recent conversation summaries 
+        print(f"🧠 Loading {max_recent_summaries} recent conversation summaries...")
+        summaries = self.logger.get_latest_summaries(max_summaries=max_recent_summaries * 2)  # Get extra to have options
         conversation_count = 0
         for summary in summaries:
-            if conversation_count >= MAX_SUMMARIES:
+            if conversation_count >= max_recent_summaries:
                 break
             
+            # Extract assistant response from the summary
             for msg in summary.get('messages', []):
                 if msg['role'] == 'assistant':
-                    final_memory_parts.append(f"[Recent Conversation]:\n{msg['content'].strip()}")
+                    final_memory_parts.append(f"[Recent Conversation #{conversation_count+1}]:\n{msg['content'].strip()}")
                     conversation_count += 1
                     break
+        print(f"✅ Added {conversation_count} recent conversation summaries to context")
+        
+        # Print total context being sent
+        total_summaries = len(latest_ltm_list[:max_ltm_summaries]) + stm_count + conversation_count
+        print(f"📝 Total memory context: {total_summaries} summaries ({len(latest_ltm_list[:max_ltm_summaries])} LTM + {stm_count} STM + {conversation_count} recent)")
         
         return "\n\n".join(final_memory_parts)
     

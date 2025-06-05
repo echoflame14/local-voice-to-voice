@@ -532,16 +532,50 @@ class VoiceAssistant:
                 messages.append({"role": "system", "content": self.system_prompt})
             
             # Get context from conversation manager (includes memory hierarchy and recent history)
+            # Use the new signature with explicit counts: 10 recent summaries, 5 STMs, 5 LTMs
             context_messages = self.conversation_manager.get_context_for_llm(
-                user_text, 
-                self.config.conversation.max_summaries_to_load
+                user_text,
+                max_recent_summaries=10,  # 10 most recent conversation summaries
+                max_stm_summaries=5,      # 5 most recent STM summaries
+                max_ltm_summaries=5       # 5 most recent LTM summaries
             )
             messages.extend(context_messages)
             
             # Add current user message
             messages.append({"role": "user", "content": user_text})
             
-            print(f"[VA DEBUG] Final message count: {len(messages)}")
+            # Comprehensive prompt logging
+            print("\n" + "="*80)
+            print("🔍 FULL LLM PROMPT BEING SENT:")
+            print("="*80)
+            
+            total_chars = 0
+            for i, msg in enumerate(messages):
+                role_emoji = {"system": "⚙️", "user": "👤", "assistant": "🤖"}.get(msg['role'], "❓")
+                content_preview = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                
+                print(f"\n{role_emoji} Message {i+1} ({msg['role'].upper()}) - {len(msg['content'])} chars:")
+                print("-" * 60)
+                
+                # For system messages with memory hierarchy, show structure
+                if msg['role'] == 'system' and 'Context from previous conversations:' in msg['content']:
+                    lines = msg['content'].split('\n')
+                    for line in lines[:10]:  # Show first 10 lines
+                        print(f"    {line}")
+                    if len(lines) > 10:
+                        print(f"    ... and {len(lines)-10} more lines")
+                else:
+                    # For other messages, show full content with proper indentation
+                    lines = msg['content'].split('\n')
+                    for line in lines:
+                        print(f"    {line}")
+                
+                total_chars += len(msg['content'])
+            
+            print("\n" + "="*80)
+            print(f"📊 PROMPT STATS: {len(messages)} messages, {total_chars:,} total characters")
+            print("="*80 + "\n")
+            
             return messages
 
         except Exception as e:
