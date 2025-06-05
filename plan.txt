@@ -1,0 +1,429 @@
+VOICE-TO-VOICE CODEBASE REFACTORING PLAN
+===========================================
+
+🎯 OBJECTIVE: Transform the codebase into a maintainable, DRY, and well-architected system
+
+📊 CURRENT STATE ANALYSIS:
+- VoiceAssistant god class (1373 lines)
+- Duplicate _is_similar_text methods in 2 files
+- Broken integration test importing non-existent classes
+- 25+ parameters in VoiceAssistant.__init__()
+- Magic numbers scattered throughout
+- Mixed threading patterns
+- Redundant utility scripts
+
+🏗️ REFACTORING PHASES
+======================
+
+PHASE 1: IMMEDIATE CLEANUP (Priority: HIGH)
+-------------------------------------------
+Timeline: 1-2 days
+
+1.1 DELETE BROKEN/UNUSED CODE
+   ✅ Run cleanup_unused_code.py to remove:
+      - test_enhanced_summary.py (if exists)
+      - test_summary_prompts.py (if exists) 
+      - test_vad_improvements.py (if exists)
+      - test_interruption_logging.py (if exists)
+      - local-voice-to-voice/tests/integration/test_pipeline.py (BROKEN)
+
+1.2 CONSOLIDATE UTILITY SCRIPTS
+   📝 Decision needed on:
+      - fast_chatbot.py → Keep as example or merge optimizations into main?
+      - analyze_performance.py → Move to tools/ directory?
+      - quick_test.py → Move to examples/ or integrate into simple_test.py?
+
+PHASE 2: ELIMINATE CODE DUPLICATION (Priority: HIGH)
+----------------------------------------------------
+Timeline: 2-3 days
+
+2.1 CREATE SHARED UTILITIES MODULE
+   📁 Create: src/utils/
+   ├── __init__.py
+   ├── text_similarity.py
+   ├── text_cleaner.py
+   └── console_utils.py
+
+2.2 EXTRACT _is_similar_text METHOD
+   📝 File: src/utils/text_similarity.py
+   ```python
+   def is_similar_text(text1: str, text2: str, 
+                      similarity_threshold: float = 0.8, 
+                      method: str = "word") -> bool:
+       """
+       Unified text similarity checker supporting both word and character-based comparison
+       
+       Args:
+           text1, text2: Texts to compare
+           similarity_threshold: Minimum similarity ratio (0-1)
+           method: "word" for word-based, "char" for character-based comparison
+       """
+   ```
+   
+   📝 Update imports in:
+   - src/pipeline/voice_assistant.py
+   - src/pipeline/conversation_logger.py
+
+2.3 EXTRACT TEXT CLEANING UTILITIES
+   📝 File: src/utils/text_cleaner.py
+   ```python
+   def clean_text_for_tts(text: str) -> str:
+       """Extract _clean_text_for_tts logic from VoiceAssistant"""
+   
+   def remove_thinking_blocks(text: str) -> str:
+       """Remove <think>...</think> blocks"""
+   
+   def remove_stage_directions(text: str) -> str:
+       """Remove *action* style directions"""
+   
+   def remove_noise_patterns(text: str) -> str:
+       """Remove um, uh, etc."""
+   ```
+
+2.4 EXTRACT CONSOLE UTILITIES
+   📝 File: src/utils/console_utils.py
+   ```python
+   def print_status(message: str, status_type: str = "info"):
+       """Unified colored status printing"""
+   
+   def print_banner(title: str, subtitle: str = ""):
+       """Unified banner printing"""
+   ```
+   
+   📝 Update files:
+   - main.py
+   - fast_chatbot.py
+   - analyze_performance.py
+
+PHASE 3: BREAK DOWN GOD CLASS (Priority: HIGH)
+----------------------------------------------
+Timeline: 5-7 days
+
+3.1 EXTRACT CONFIGURATION MANAGEMENT
+   📝 Create: src/config/assistant_config.py
+   ```python
+   @dataclass
+   class STTConfig:
+       model_size: str = "base"
+       device: str = None
+   
+   @dataclass  
+   class TTSConfig:
+       device: str = None
+       voice_reference_path: str = None
+       exaggeration: float = 0.5
+       cfg_weight: float = 0.5
+       temperature: float = 0.8
+   
+   @dataclass
+   class LLMConfig:
+       use_gemini: bool = True
+       base_url: str = "http://localhost:1234/v1"
+       api_key: str = "not-needed"
+       gemini_api_key: str = None
+       gemini_model: str = "models/gemini-1.5-flash"
+       system_prompt: str = None
+       max_response_tokens: int = 300
+       temperature: float = 1
+   
+   @dataclass
+   class AudioConfig:
+       sample_rate: int = 16000
+       chunk_size: int = 1024
+       min_amplitude: float = 0.015
+   
+   @dataclass
+   class InputConfig:
+       mode: str = "vad"
+       vad_aggressiveness: int = 1
+       vad_speech_threshold: float = 0.3
+       vad_silence_threshold: float = 0.8
+       push_to_talk_key: str = "space"
+   
+   @dataclass
+   class VoiceAssistantConfig:
+       stt: STTConfig = field(default_factory=STTConfig)
+       tts: TTSConfig = field(default_factory=TTSConfig)
+       llm: LLMConfig = field(default_factory=LLMConfig)
+       audio: AudioConfig = field(default_factory=AudioConfig)
+       input: InputConfig = field(default_factory=InputConfig)
+       # ... other config sections
+   ```
+
+3.2 EXTRACT CONVERSATION MANAGEMENT
+   📝 Create: src/managers/conversation_manager.py
+   ```python
+   class ConversationManager:
+       """Handles conversation history, logging, and summarization"""
+       
+       def __init__(self, config: ConversationConfig):
+           self.history = []
+           self.logger = ConversationLogger(config.log_dir)
+           self.summarizer = ConversationSummarizer(llm)
+           self.memory_manager = HierarchicalMemoryManager(self.logger, self.summarizer)
+       
+       def add_message(self, role: str, content: str):
+       def get_context_for_llm(self, user_text: str) -> List[Dict[str, str]]:
+       def clear_history(self):
+       def load_history(self, filepath: str):
+   ```
+
+3.3 EXTRACT AUDIO HANDLING
+   📝 Create: src/managers/audio_handler.py
+   ```python
+   class AudioHandler:
+       """Handles audio input, VAD, and sound effects"""
+       
+       def __init__(self, config: AudioConfig):
+           self.stream_manager = AudioStreamManager(...)
+           self.vad = VoiceActivityDetector(...)
+           self.sound_effects = SoundEffects(...)
+       
+       def start_listening(self):
+       def stop_listening(self):
+       def play_sound_effect(self, effect_type: str):
+       def process_audio_chunk(self, chunk: np.ndarray) -> bool:
+   ```
+
+3.4 EXTRACT RESPONSE PROCESSING
+   📝 Create: src/managers/response_processor.py
+   ```python
+   class ResponseProcessor:
+       """Handles LLM interaction and response processing"""
+       
+       def __init__(self, llm_config: LLMConfig, tts_config: TTSConfig):
+           self.llm = self._create_llm(llm_config)
+           self.tts = ChatterboxTTSWrapper(...)
+       
+       def generate_response(self, messages: List[Dict[str, str]]) -> str:
+       def synthesize_speech(self, text: str, streaming: bool = True):
+       def clean_response_text(self, text: str) -> str:
+   ```
+
+3.5 REFACTOR VOICEASSISTANT (COORDINATOR)
+   📝 Update: src/pipeline/voice_assistant.py
+   ```python
+   class VoiceAssistant:
+       """Main coordinator - delegates to specialized managers"""
+       
+       def __init__(self, config: VoiceAssistantConfig):
+           self.config = config
+           self.conversation_manager = ConversationManager(config.conversation)
+           self.audio_handler = AudioHandler(config.audio)
+           self.response_processor = ResponseProcessor(config.llm, config.tts)
+           self.is_running = False
+           
+       def start(self):
+           """Start the assistant"""
+           
+       def stop(self):
+           """Stop the assistant"""
+           
+       def _on_speech_detected(self, audio: np.ndarray):
+           """Handle speech detection"""
+   ```
+   Target: Reduce from 1373 lines to ~300-400 lines
+
+PHASE 4: ELIMINATE MAGIC NUMBERS (Priority: MEDIUM)
+---------------------------------------------------
+Timeline: 1-2 days
+
+4.1 CREATE CONSTANTS MODULE
+   📝 Create: src/constants.py
+   ```python
+   # Text similarity
+   DEFAULT_SIMILARITY_THRESHOLD = 0.8
+   WORD_SIMILARITY_METHOD = "word"
+   CHAR_SIMILARITY_METHOD = "char"
+   
+   # Audio processing
+   DEFAULT_VOICE_DURATION = 12.0  # seconds
+   FADE_DURATION_MS = 50
+   SYNTHESIS_GRACE_PERIOD = 1.5
+   
+   # Performance thresholds
+   FAST_SYNTHESIS_THRESHOLD = 0.5  # x realtime
+   GOOD_SYNTHESIS_THRESHOLD = 1.0
+   SLOW_SYNTHESIS_THRESHOLD = 2.0
+   
+   # File patterns
+   CONVERSATION_FILE_PATTERN = "conversation_*.json"
+   SUMMARY_FILE_PATTERN = "*_summary.json"
+   STM_SUMMARY_PATTERN = "stm_*_summary.json"
+   LTM_SUMMARY_PATTERN = "ltm_*_summary.json"
+   ```
+
+4.2 UPDATE REFERENCES
+   📝 Replace hardcoded values in:
+   - trim_voice_sample.py
+   - conversation_logger.py
+   - voice_assistant.py
+   - analyze_performance.py
+
+PHASE 5: STANDARDIZE THREADING (Priority: MEDIUM)
+-------------------------------------------------
+Timeline: 2-3 days
+
+5.1 CREATE THREADING UTILITIES
+   📝 Create: src/utils/threading_utils.py
+   ```python
+   def create_daemon_thread(target, args=(), name=None):
+       """Standardized daemon thread creation"""
+   
+   def safe_thread_join(thread, timeout=None):
+       """Safe thread joining with timeout"""
+   
+   class ThreadManager:
+       """Manages multiple threads for the assistant"""
+   ```
+
+5.2 REFACTOR THREADING USAGE
+   📝 Update threading in:
+   - voice_assistant.py
+   - stream_manager.py
+   - audio_handler.py
+
+PHASE 6: IMPROVE ARCHITECTURE (Priority: LOW-MEDIUM)
+----------------------------------------------------
+Timeline: 3-5 days
+
+6.1 IMPLEMENT DEPENDENCY INJECTION
+   📝 Create: src/core/dependency_container.py
+   ```python
+   class DependencyContainer:
+       """IoC container for dependency management"""
+   ```
+
+6.2 ADD PROPER ERROR HANDLING
+   📝 Create: src/exceptions/
+   ├── audio_exceptions.py
+   ├── llm_exceptions.py
+   └── tts_exceptions.py
+
+6.3 STANDARDIZE INTERFACES
+   📝 Create: src/interfaces/
+   ├── llm_interface.py
+   ├── tts_interface.py
+   └── stt_interface.py
+
+PHASE 7: TESTING AND VALIDATION (Priority: HIGH)
+------------------------------------------------
+Timeline: 2-3 days
+
+7.1 CREATE PROPER UNIT TESTS
+   📝 Create: tests/unit/
+   ├── test_text_similarity.py
+   ├── test_text_cleaner.py
+   ├── test_conversation_manager.py
+   ├── test_audio_handler.py
+   └── test_response_processor.py
+
+7.2 CREATE INTEGRATION TESTS
+   📝 Create: tests/integration/
+   ├── test_voice_pipeline.py (FIXED VERSION)
+   ├── test_audio_integration.py
+   └── test_llm_integration.py
+
+7.3 CREATE PERFORMANCE TESTS
+   📝 Move analyze_performance.py → tests/performance/
+   📝 Create proper performance benchmarks
+
+🔧 IMPLEMENTATION GUIDELINES
+============================
+
+GENERAL PRINCIPLES:
+- ✅ Single Responsibility Principle
+- ✅ Don't Repeat Yourself (DRY)
+- ✅ Dependency Inversion
+- ✅ Interface Segregation
+- ✅ Comprehensive error handling
+- ✅ Consistent naming conventions
+- ✅ Type hints everywhere
+- ✅ Docstrings for all public methods
+
+CODING STANDARDS:
+- Use dataclasses for configuration objects
+- Use ABC for interfaces
+- Use context managers for resource management
+- Use proper logging instead of print statements
+- Use async/await for I/O operations where appropriate
+- Maximum 100 lines per method
+- Maximum 500 lines per class
+
+TESTING STRATEGY:
+- Unit tests for all utilities and managers
+- Integration tests for component interactions
+- Performance tests for critical paths
+- Mock external dependencies (LLM, TTS models)
+- Test error conditions and edge cases
+
+📈 SUCCESS METRICS
+==================
+
+BEFORE → AFTER:
+- VoiceAssistant class: 1373 lines → ~300-400 lines
+- Code duplication: 2 similar methods → 0 duplicate methods
+- Magic numbers: ~20+ → 0 (all in constants)
+- Parameter count: 25+ → <10 per method
+- Test coverage: Broken tests → 90%+ coverage
+- Maintainability index: Low → High
+
+🚀 MIGRATION STRATEGY
+=====================
+
+1. CREATE FEATURE BRANCHES for each phase
+2. MAINTAIN BACKWARD COMPATIBILITY during refactoring
+3. DEPLOY INCREMENTALLY with feature flags if needed
+4. KEEP OLD INTERFACES until new ones are fully tested
+5. UPDATE DOCUMENTATION after each phase
+6. PERFORMANCE TEST after each major change
+
+📝 DELIVERABLES PER PHASE
+=========================
+
+Phase 1: Clean repository, removed broken code
+Phase 2: Shared utilities, no code duplication
+Phase 3: Modular architecture, manageable class sizes
+Phase 4: Configuration-driven, no magic numbers
+Phase 5: Consistent threading patterns
+Phase 6: Professional architecture with proper error handling
+Phase 7: Comprehensive test suite
+
+🎯 ESTIMATED TIMELINE
+=====================
+
+Total: 3-4 weeks (assuming 1-2 developers, part-time)
+
+Week 1: Phases 1-2 (Cleanup + DRY)
+Week 2: Phase 3 (Architecture breakdown)  
+Week 3: Phases 4-5 (Polish + Threading)
+Week 4: Phases 6-7 (Advanced architecture + Testing)
+
+⚠️ RISKS AND MITIGATIONS
+========================
+
+RISK: Breaking existing functionality
+MITIGATION: Comprehensive testing, gradual refactoring
+
+RISK: Performance regression
+MITIGATION: Performance tests, benchmarking
+
+RISK: Over-engineering
+MITIGATION: Focus on actual problems, avoid premature optimization
+
+RISK: Scope creep
+MITIGATION: Stick to plan, defer non-critical improvements
+
+🏁 COMPLETION CRITERIA
+======================
+
+✅ All duplicate code eliminated
+✅ VoiceAssistant class under 500 lines
+✅ No magic numbers in code
+✅ All tests passing
+✅ Performance maintained or improved
+✅ Code coverage >90%
+✅ Documentation updated
+✅ Clean architecture that's easy to extend
+
+This plan transforms the codebase from a monolithic, hard-to-maintain system into a clean, modular, and professional architecture that follows software engineering best practices. 
