@@ -18,6 +18,8 @@ from ..audio import AudioStreamManager, SoundEffects
 from .conversation_logger import ConversationLogger
 from .conversation_summarizer import ConversationSummarizer
 from .hierarchical_memory_manager import HierarchicalMemoryManager, NUM_CONV_SUMMARIES_FOR_STM, NUM_STM_FOR_LTM
+from ..utils.text_similarity import is_similar_text
+from ..utils.text_cleaner import clean_text_for_tts
 
 
 class VoiceAssistant:
@@ -922,12 +924,12 @@ class VoiceAssistant:
                     recent_messages = self.conversation_history[-2:] if len(self.conversation_history) >= 2 else self.conversation_history
                     
                     for msg in recent_messages:
-                        if msg['role'] == 'user' and self._is_similar_text(msg['content'], user_text):
+                        if msg['role'] == 'user' and is_similar_text(msg['content'], user_text, method="char"):
                             # Skip duplicate user message
                             print("⚠️ Skipping duplicate user message")
                             should_log = False
                             break
-                        elif msg['role'] == 'assistant' and self._is_similar_text(msg['content'], full_response_text):
+                        elif msg['role'] == 'assistant' and is_similar_text(msg['content'], full_response_text, method="char"):
                             # Skip duplicate assistant message
                             print("⚠️ Skipping duplicate assistant message")
                             should_log = False
@@ -982,104 +984,9 @@ class VoiceAssistant:
             if self.on_synthesis_end:
                 self.on_synthesis_end()
     
-    def _is_similar_text(self, text1: str, text2: str, similarity_threshold: float = 0.8) -> bool:
-        """Check if two texts are similar enough to be considered duplicates"""
-        if not text1 or not text2:
-            return False
-            
-        # Clean and normalize texts
-        text1 = re.sub(r'\s+', ' ', text1.strip().lower())
-        text2 = re.sub(r'\s+', ' ', text2.strip().lower())
-        
-        # Quick length check
-        if abs(len(text1) - len(text2)) / max(len(text1), len(text2)) > 0.2:
-            return False
-        
-        # Check if one is a substring of the other
-        if text1 in text2 or text2 in text1:
-            return True
-        
-        # Calculate similarity using character-based comparison
-        shorter = text1 if len(text1) <= len(text2) else text2
-        longer = text2 if len(text1) <= len(text2) else text1
-        
-        # Use sliding window to find best match
-        max_similarity = 0
-        window_size = len(shorter)
-        
-        for i in range(len(longer) - window_size + 1):
-            window = longer[i:i + window_size]
-            matches = sum(1 for a, b in zip(shorter, window) if a == b)
-            similarity = matches / window_size
-            max_similarity = max(max_similarity, similarity)
-        
-        return max_similarity >= similarity_threshold
+
     
-    def _clean_text_for_tts(self, text: str) -> str:
-        """Clean text for TTS synthesis"""
-        original_text = text
-        
-        # Remove thinking blocks
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-        
-        # Remove stage directions
-        text = re.sub(r'\*[^*]*\*', '', text)
-        
-        # Filter out common noise patterns - Enhanced version
-        noise_patterns = [
-            r'\b(?:um+|uh+|ah+|er+)\b',  # Filler sounds
-            r'\b(?:background\s+noise|static)\b',
-            r'(?:\s*\.\s*){3,}',  # Multiple dots
-            r'\b(?:silence|pause)\b',
-            r'(?:\s*[^\w\s]\s*){3,}',  # Multiple punctuation marks
-        ]
-        
-        for pattern in noise_patterns:
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-        
-        # Remove system prompt leakage patterns
-        prompt_patterns = [
-            r'You are.*?assistant.*?voice',
-            r'CRITICAL.*?RULES.*?',
-            r'VOICE OPTIMIZATION.*?',
-            r'PERSONALITY.*?',
-            r'EXAMPLE.*?RESPONSES.*?',
-            r'AVOID.*?:',
-            r'def \w+.*?\(.*?\):',  # Remove Python code
-            r'print\(.*?\)',        # Remove print statements
-            r'hello\(.*?\)',        # Remove function calls
-            r'# prints.*?',         # Remove code comments
-            r'pythonYou are.*?',    # Remove malformed prompt text
-            r'```.*?```',           # Remove code blocks
-            r'""".*?"""',           # Remove docstrings
-        ]
-        
-        for pattern in prompt_patterns:
-            text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Remove extra whitespace and clean up multiple spaces
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Additional noise checks
-        if text:
-            words = text.split()
-            # Check for suspicious patterns, but preserve "between a"
-            if (len(words) > 2 and
-                text.lower() != "between a" and  # Preserve exact "between a"
-                text.lower() != "between a." and  # Preserve with period
-                (len(set(words)) < len(words) / 3 or  # Too much repetition
-                 (sum(len(w) < 3 for w in words) > len(words) / 2 and "between a" not in text.lower()))):  # Too many short words, unless it's "between a"
-                print(f"⚠️ Suspicious text pattern detected, using original: '{text}'")
-                text = ""
-        
-        # Remove empty sentences
-        if not text or len(text) < 3:
-            # If we had text originally but it got cleaned away, return original for conversational responses
-            if original_text and len(original_text.strip()) > 3:
-                return original_text.strip()
-            return ""
-        
-        return text
+
     
     def _processing_loop(self):
         """Main processing loop (placeholder for future enhancements)"""

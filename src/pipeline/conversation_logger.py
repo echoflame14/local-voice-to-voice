@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
+from ..utils.text_similarity import is_similar_text
+
 class ConversationLogger:
     """Handles logging and loading of conversation histories"""
     
@@ -57,7 +59,7 @@ class ConversationLogger:
         if conversation:
             last_message = conversation[-1]
             if (last_message['role'] == role and 
-                self._is_similar_text(last_message['content'], content)):
+                is_similar_text(last_message['content'], content, method="word")):
                 print("⚠️ Skipping duplicate message")
                 return
         
@@ -70,35 +72,7 @@ class ConversationLogger:
         
         self._save_conversation(conversation)
     
-    def _is_similar_text(self, text1: str, text2: str, similarity_threshold: float = 0.8) -> bool:
-        """Check if two texts are similar enough to be considered duplicates"""
-        if not text1 or not text2:
-            return False
-            
-        # Clean and normalize texts
-        text1 = ' '.join(text1.strip().lower().split())
-        text2 = ' '.join(text2.strip().lower().split())
-        
-        # Quick length check
-        if abs(len(text1) - len(text2)) / max(len(text1), len(text2)) > 0.2:
-            return False
-        
-        # Check if one is a substring of the other
-        if text1 in text2 or text2 in text1:
-            return True
-        
-        # Calculate similarity using word-based comparison
-        words1 = set(text1.split())
-        words2 = set(text2.split())
-        
-        if not words1 or not words2:
-            return False
-            
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        
-        similarity = len(intersection) / len(union)
-        return similarity >= similarity_threshold
+
     
     def get_current_conversation(self) -> List[Dict]:
         """Get the current conversation history"""
