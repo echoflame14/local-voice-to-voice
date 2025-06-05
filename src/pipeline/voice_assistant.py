@@ -15,12 +15,11 @@ from ..stt import WhisperSTT
 # (LLM imports performed lazily below to allow choosing provider)
 from ..tts import ChatterboxTTSWrapper
 from ..audio import AudioStreamManager, SoundEffects
-from .conversation_logger import ConversationLogger
-from .conversation_summarizer import ConversationSummarizer
-from .hierarchical_memory_manager import HierarchicalMemoryManager, NUM_CONV_SUMMARIES_FOR_STM, NUM_STM_FOR_LTM
+# Conversation management now handled by ConversationManager
 from ..utils.text_similarity import is_similar_text
 from ..utils.text_cleaner import clean_text_for_tts
 from ..config import VoiceAssistantConfig
+from ..managers import ConversationManager
 
 
 class VoiceAssistant:
@@ -179,7 +178,8 @@ class VoiceAssistant:
         self.is_speaking = False
         self.is_processing = False
         self.tentative_interruption = False
-        self.conversation_history: List[Dict[str, str]] = []
+        # Initialize conversation manager
+        self.conversation_manager = ConversationManager(config.conversation, config.llm)
         
         # Interruption handling for speech continuation
         self.interrupted_user_text = ""
@@ -223,50 +223,9 @@ class VoiceAssistant:
         self.enable_interruption_sound = config.sound_effects.enable_interruption_sound
         self.enable_generation_sound = config.sound_effects.enable_generation_sound
         
-        # Conversation logging and summarization
+        # Legacy conversation attributes for compatibility
         self.log_conversations = config.conversation.log_conversations
         self.auto_summarize = config.conversation.auto_summarize_conversations
-        self.max_summaries_to_load = config.conversation.max_summaries_to_load
-        
-        if config.conversation.log_conversations:
-            self.conversation_logger = ConversationLogger(log_dir=config.conversation.conversation_log_dir)
-            # Determine LLM for summarizer based on main LLM choice
-            # Re-using the main LLM instance for summarization is generally not recommended
-            # if it has a very specific system prompt or character.
-            # It's better to use a dedicated summarization model or a general model with a summarization prompt.
-            
-            # Create a summarizer LLM using the same provider as the main LLM
-            from configs import config as app_config
-            if self.use_gemini and config.llm.gemini_api_key:
-                from ..llm import GeminiLLM
-                summarizer_llm = GeminiLLM(
-                    api_key=config.llm.gemini_api_key,
-                    model=config.llm.gemini_model,
-                    system_prompt=app_config.SUMMARIZER_SYSTEM_PROMPT
-                )
-            else:
-                summarizer_llm = OpenAICompatibleLLM(
-                    base_url=config.llm.base_url,
-                    api_key=config.llm.api_key,
-                    model=None,
-                    system_prompt=app_config.SUMMARIZER_SYSTEM_PROMPT
-                )
-            self.conversation_summarizer = ConversationSummarizer(summarizer_llm)
-            self.hierarchical_memory_manager = HierarchicalMemoryManager(
-                self.conversation_logger, 
-                self.conversation_summarizer
-            )
-            self.conversation_logger.start_new_conversation()
-            
-            # Process any unsummarized conversations and update memory hierarchy
-            if config.conversation.auto_summarize_conversations: # This flag now implicitly covers hierarchical summarization
-                print("🚀 Initializing memory system: Processing unsummarized conversations and updating hierarchy...")
-                self._process_unsummarized_conversations() # Ensure all individual conversations are summarized first
-                self.hierarchical_memory_manager.update_memory_hierarchy() # Build STMs and LTMs
-                print("✅ Memory system initialized.")
-            
-            # Load hierarchical memory
-            self._load_hierarchical_memory()
         
         self.max_history_messages = max_history_messages
         
@@ -563,94 +522,22 @@ class VoiceAssistant:
     def _prepare_messages_for_llm(self, user_text: str) -> List[Dict[str, str]]:
         """Prepare messages for LLM including system prompt, memory hierarchy, and conversation history"""
         try:
-            # Start with base system prompt
-            base_system_prompt = self.llm.system_prompt
-            memory_introduction = "\n\n[EXTENDED CONTEXTUAL MEMORY FOLLOWS]:\n"
-            final_memory_content_parts = []
-
-            if self.log_conversations and hasattr(self, 'hierarchical_memory_manager'):
-                # Update memory hierarchy
-                print("[VA DEBUG] Updating memory hierarchy...")
-                self._process_unsummarized_conversations()
-                self.hierarchical_memory_manager.update_memory_hierarchy()
-
-                # Define how many of each to load
-                MAX_LTMS = 3
-                MAX_STMS = 3
-                MAX_SUMMARIES = 3
-
-                processed_stm_paths = set()
-                processed_conv_summary_paths = set()
-
-                # 1. Load Latest LTMs
-                print("[VA DEBUG] Loading LTMs...")
-                latest_ltm_list = self.conversation_logger.get_latest_ltm_summaries(max_ltm_summaries=MAX_LTMS)
-                if latest_ltm_list:
-                    for ltm in reversed(latest_ltm_list):
-                        ltm_content = ltm.get('content', '').strip()
-                        if ltm_content:
-                            final_memory_content_parts.append(f"[Long-Term Memory]:\n{ltm_content}")
-                            for stm_path in ltm.get('constituent_stms', []):
-                                processed_stm_paths.add(str(Path(stm_path)))
-
-                # 2. Load Latest STMs
-                print("[VA DEBUG] Loading STMs...")
-                stms = self.conversation_logger.get_latest_stm_summaries(max_stm_summaries=MAX_STMS * 2)
-                for stm in reversed(stms):
-                    stm_file_path = str(Path(stm.get('file_path', '')))
-                    if stm_file_path not in processed_stm_paths:
-                        stm_content = stm.get('content', '').strip()
-                        if stm_content:
-                            final_memory_content_parts.append(f"[Short-Term Memory]:\n{stm_content}")
-                            for conv_sum_path in stm.get('constituent_summaries', []):
-                                processed_conv_summary_paths.add(str(Path(conv_sum_path)))
-                            if len([p for p in final_memory_content_parts if '[Short-Term Memory]' in p]) >= MAX_STMS:
-                                break
-
-                # 3. Load Latest Individual Summaries
-                print("[VA DEBUG] Loading recent conversation summaries...")
-                summaries = self.conversation_logger.get_latest_summaries(max_summaries=MAX_SUMMARIES * 2)
-                for summary in reversed(summaries):
-                    original_file_path = str(Path(summary.get('file_path', '')))
-                    if original_file_path not in processed_conv_summary_paths:
-                        if summary.get('messages') and isinstance(summary['messages'], list):
-                            for msg in summary['messages']:
-                                if msg.get('role') == 'assistant' and msg.get('content'):
-                                    final_memory_content_parts.append(f"[Recent Conversation]:\n{msg['content'].strip()}")
-                                    break
-                        if len([p for p in final_memory_content_parts if '[Recent Conversation]' in p]) >= MAX_SUMMARIES:
-                            break
-
-                # Construct comprehensive system prompt
-                comprehensive_system_prompt = base_system_prompt
-                if final_memory_content_parts:
-                    comprehensive_system_prompt += memory_introduction + "\n\n".join(final_memory_content_parts)
-                    print(f"[VA DEBUG] Added {len(final_memory_content_parts)} memory entries to system prompt")
-            else:
-                comprehensive_system_prompt = base_system_prompt
-                print("[VA DEBUG] Using base system prompt (no memory system available)")
-
-            # Start with system message
-            messages = [{
-                "role": "system",
-                "content": comprehensive_system_prompt
-            }]
-
-            # Add recent conversation history (last few turns)
-            if self.conversation_history:
-                # Skip the system message if it exists
-                history_messages = [msg for msg in self.conversation_history if msg['role'] != 'system']
-                # Take last few turns (e.g., last 4 messages = 2 turns)
-                recent_history = history_messages[-4:]
-                messages.extend(recent_history)
-                print(f"[VA DEBUG] Added {len(recent_history)} recent messages from history")
-
+            messages = []
+            
+            # Add system prompt if configured
+            if self.system_prompt:
+                messages.append({"role": "system", "content": self.system_prompt})
+            
+            # Get context from conversation manager (includes memory hierarchy and recent history)
+            context_messages = self.conversation_manager.get_context_for_llm(
+                user_text, 
+                self.config.conversation.max_summaries_to_load
+            )
+            messages.extend(context_messages)
+            
             # Add current user message
-            messages.append({
-                "role": "user",
-                "content": user_text
-            })
-
+            messages.append({"role": "user", "content": user_text})
+            
             print(f"[VA DEBUG] Final message count: {len(messages)}")
             return messages
 
@@ -659,7 +546,7 @@ class VoiceAssistant:
             print(f"[VA ERROR] Traceback: {traceback.format_exc()}")
             # Fallback to basic message structure
             return [
-                {"role": "system", "content": self.llm.system_prompt},
+                {"role": "system", "content": self.llm.system_prompt if self.llm else ""},
                 {"role": "user", "content": user_text}
             ]
 
@@ -684,10 +571,9 @@ class VoiceAssistant:
                 print("[VA DEBUG] Calling transcription callback...")
                 self.on_transcription(user_text)
             
-            # Log user message
-            if self.log_conversations:
-                print("[VA DEBUG] Logging user message...")
-                self.conversation_logger.log_message("user", user_text)
+            # Add user message to conversation
+            print("[VA DEBUG] Adding user message to conversation...")
+            self.conversation_manager.add_message("user", user_text)
             
             # Generate response
             print("[VA DEBUG] Starting response generation...")
@@ -704,26 +590,16 @@ class VoiceAssistant:
                 )
                 print(f"[VA DEBUG] LLM response received: {response[:50]}...")
                 
-                # Add messages to conversation history
+                # Add assistant response to conversation
                 if response:
-                    self.conversation_history.append({
-                        "role": "user",
-                        "content": user_text
-                    })
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": response
-                    })
+                    self.conversation_manager.add_message("assistant", response)
                 
                 # Call response callback
                 if self.on_response:
                     print("[VA DEBUG] Calling response callback...")
                     self.on_response(response)
                 
-                # Log assistant message
-                if self.log_conversations:
-                    print("[VA DEBUG] Logging assistant message...")
-                    self.conversation_logger.log_message("assistant", response)
+                # Note: Assistant message already logged by conversation_manager.add_message() above
                 
                 # Synthesize speech
                 print("[VA DEBUG] Starting speech synthesis...")
@@ -952,54 +828,26 @@ class VoiceAssistant:
             # Play completion sound effect
             self._play_sound_effect("completion")
             
-            # Update conversation history with raw text
+            # Update conversation with streaming response
             full_response_text = "".join(full_response).strip()
             if full_response_text:
-                # Check for duplicate or incomplete messages
-                should_log = True
-                if self.conversation_history:
-                    # Get last few messages
-                    recent_messages = self.conversation_history[-2:] if len(self.conversation_history) >= 2 else self.conversation_history
-                    
-                    for msg in recent_messages:
-                        if msg['role'] == 'user' and is_similar_text(msg['content'], user_text, method="char"):
-                            # Skip duplicate user message
-                            print("⚠️ Skipping duplicate user message")
-                            should_log = False
-                            break
-                        elif msg['role'] == 'assistant' and is_similar_text(msg['content'], full_response_text, method="char"):
-                            # Skip duplicate assistant message
-                            print("⚠️ Skipping duplicate assistant message")
-                            should_log = False
-                            break
-                
-                if should_log:
-                    # For continuations, replace the last user message instead of adding new one
-                    if self.is_continuation and self.conversation_history and self.conversation_history[-2]["role"] == "user":
-                        # Replace the last user message with the combined text
-                        self.conversation_history[-2]["content"] = user_text
-                        print(f"🔄 Updated conversation history with combined user text")
+                # Handle continuations by updating the last user message
+                if self.is_continuation:
+                    if self.conversation_manager.update_last_user_message(user_text):
+                        print(f"🔄 Updated last user message with continuation")
                     else:
-                        # Normal case: add new user message
-                        self.conversation_history.append({"role": "user", "content": user_text})
-                    
-                    # Add the raw assistant response
-                    self.conversation_history.append({"role": "assistant", "content": full_response_text})
-                    
-                    # Log messages if enabled
-                    if self.log_conversations:
-                        self.conversation_logger.log_message("user", user_text)
-                        self.conversation_logger.log_message("assistant", full_response_text)
-                    
-                    # Keep conversation history manageable by truncating if needed
-                    if len(self.conversation_history) > self.max_history_messages:
-                        print(f"📝 Truncating conversation history to {self.max_history_messages} messages")
-                        # Keep most recent messages
-                        self.conversation_history = self.conversation_history[-self.max_history_messages:]
-                    
-                    # Show the raw response to user via callback
-                    if self.on_response:
-                        self.on_response(full_response_text)
+                        # Fallback: add as new message
+                        self.conversation_manager.add_message("user", user_text)
+                else:
+                    # Normal case: add new user message
+                    self.conversation_manager.add_message("user", user_text)
+                
+                # Add the assistant response
+                self.conversation_manager.add_message("assistant", full_response_text)
+                
+                # Show the raw response to user via callback
+                if self.on_response:
+                    self.on_response(full_response_text)
                 
                 # Clear continuation flag
                 self.is_continuation = False
@@ -1100,14 +948,11 @@ class VoiceAssistant:
     
     def get_conversation_history(self) -> List[Dict[str, str]]:
         """Get conversation history"""
-        return self.conversation_history.copy()
+        return self.conversation_manager.get_history()
     
     def clear_conversation_history(self):
         """Clear conversation history and start new log file"""
-        self.conversation_history.clear()
-        if self.log_conversations:
-            self.conversation_logger.start_new_conversation()
-        print("🧹 Conversation history cleared")
+        self.conversation_manager.clear_history()
     
     def is_busy(self) -> bool:
         """Check if assistant is currently processing"""
@@ -1124,195 +969,21 @@ class VoiceAssistant:
         self.audio_manager.cleanup()
     
     def load_conversation_history(self, filepath: str):
-        """Load and summarize a previous conversation history"""
-        if not self.log_conversations:
-            print("⚠️ Conversation logging is disabled")
-            return
-            
-        try:
-            # Load the conversation
-            conversation = self.conversation_logger.load_conversation_file(filepath)
-            if not conversation:
-                print("⚠️ No conversation found in file")
-                return
-                
-            print(f"📚 Loaded {len(conversation)} messages from {filepath}")
-            
-            # Summarize the conversation
-            print("🤖 Generating conversation summary...")
-            summarized = self.conversation_summarizer.summarize_conversation(conversation)
-            
-            # Update conversation history
-            self.conversation_history = summarized
-            print(f"✅ Conversation history updated with {len(summarized)} summarized messages")
-            
-        except Exception as e:
-            print(f"❌ Error loading conversation history: {e}")
+        """Load a previous conversation history"""
+        return self.conversation_manager.load_conversation_file(filepath)
     
     def get_conversation_files(self) -> List[str]:
         """Get list of available conversation log files"""
-        if not self.log_conversations:
-            return []
-        return self.conversation_logger.get_conversation_files()
+        return self.conversation_manager.get_conversation_files()
     
     def _process_unsummarized_conversations(self):
         """Process any conversations that haven't been summarized yet"""
-        try:
-            unsummarized = self.conversation_logger.get_unsummarized_conversations()
-            if unsummarized:
-                print(f"🔄 Found {len(unsummarized)} new conversations to summarize individually")
-                current_file = str(self.conversation_logger.current_log_file)
-                
-                for filepath in unsummarized:
-                    # Skip the current conversation file
-                    if filepath == current_file:
-                        print(f"⏩ Skipping current active conversation: {filepath}")
-                        continue
-                        
-                    try:
-                        print(f"\n📝 Summarizing new conversation: {filepath}")
-                        conversation = self.conversation_logger.load_conversation_file(filepath)
-                        
-                        # Only summarize if there are messages
-                        if conversation:
-                            print("🤖 Generating summary (streaming):")
-                            print("=" * 60)
-                            
-                            # Stream the summary generation and collect chunks
-                            summary_chunks = []
-                            for chunk in self.conversation_summarizer.stream_summarize_conversation(conversation):
-                                print(chunk, end='', flush=True)
-                                summary_chunks.append(chunk)
-                            print("\n" + "=" * 60)
-                            
-                            # Create summary message
-                            summary_text = "".join(summary_chunks).strip()
-                            if not summary_text:
-                                print("⚠️ Empty summary generated, using fallback")
-                                summary_messages = self.conversation_summarizer._fallback_summary(conversation)
-                            else:
-                                summary_messages = [{
-                                    "role": "assistant",
-                                    "content": summary_text
-                                }]
-                            
-                            # Save the summary
-                            summary_file = self.conversation_logger.save_conversation_summary(filepath, summary_messages)
-                            print(f"✅ Created new summary: {summary_file}")
-                            
-                            # Debug output
-                            print("\n[DEBUG] Generated summary:")
-                            print(f"  {summary_text[:500]}{'...' if len(summary_text) > 500 else ''}")
-                            
-                    except Exception as e:
-                        print(f"⚠️ Error summarizing {filepath}: {e}")
-            else:
-                print("✨ No new individual conversations to summarize")
-        except Exception as e:
-            print(f"❌ Error processing unsummarized conversations: {e}")
+        # Delegate to conversation manager
+        if hasattr(self.conversation_manager, '_process_unsummarized_conversations'):
+            self.conversation_manager._process_unsummarized_conversations()
     
     def _load_hierarchical_memory(self):
-        """Load the latest LTMs, STMs, and individual summaries into a comprehensive system prompt."""
-        try:
-            base_system_prompt = self.llm.system_prompt
-            memory_introduction = "The following is a conversation between a user and an AI assistant.\n\n[EXTENDED CONTEXTUAL MEMORY FOLLOWS]:\n"
-            final_memory_content_parts = []
-
-            if not self.log_conversations or not hasattr(self, 'hierarchical_memory_manager'):
-                self.conversation_history = [{
-                    "role": "system",
-                    "content": base_system_prompt # Only base prompt if no logging/memory manager
-                }]
-                return
-
-            print("Updating memory hierarchy before loading into prompt...")
-            self._process_unsummarized_conversations()
-            self.hierarchical_memory_manager.update_memory_hierarchy()
-            print("Memory hierarchy updated.")
-
-            processed_stm_paths = set()
-            processed_conv_summary_paths = set()
-
-            # Define how many of each to load into the prompt
-            MAX_LTMS_TO_LOAD_IN_PROMPT = 5
-            MAX_STMS_TO_LOAD_IN_PROMPT = 5
-            MAX_CONV_SUMMARIES_TO_LOAD_IN_PROMPT = 5
-
-            # 1. Load Latest LTMs
-            latest_ltm_list = self.conversation_logger.get_latest_ltm_summaries(max_ltm_summaries=MAX_LTMS_TO_LOAD_IN_PROMPT)
-            ltms_loaded_content = []
-            if latest_ltm_list:
-                for ltm in reversed(latest_ltm_list): # Newest LTM last (so it appears first after context header)
-                    ltm_content = ltm.get('content', '').strip()
-                    ltm_file_path = str(Path(ltm.get('file_path', ltm.get('summary_timestamp', 'unknown_ltm'))))
-                    if ltm_content:
-                        ltms_loaded_content.append(f"[Long-Term Memory Synthesis - ID: {Path(ltm_file_path).stem}]:\n{ltm_content}")
-                        print(f"🧠 Adding LTM to prompt: {Path(ltm_file_path).stem}")
-                        for stm_path in ltm.get('constituent_stms', []):
-                            processed_stm_paths.add(str(Path(stm_path)))
-            if ltms_loaded_content:
-                final_memory_content_parts.extend(ltms_loaded_content)
-
-            # 2. Load Latest STMs, excluding those already in LTMs
-            # Fetch a bit more initially to allow filtering
-            stms_to_potentially_load = self.conversation_logger.get_latest_stm_summaries(max_stm_summaries=MAX_STMS_TO_LOAD_IN_PROMPT * 2)
-            stms_added_to_prompt_content = []
-            for stm in reversed(stms_to_potentially_load): # Newest STM last
-                stm_file_path = str(Path(stm.get('file_path', stm.get('summary_timestamp', 'unknown_stm'))))
-                if stm_file_path not in processed_stm_paths:
-                    stm_content = stm.get('content', '').strip()
-                    if stm_content:
-                        stms_added_to_prompt_content.append(f"[Short-Term Memory Snapshot - ID: {Path(stm_file_path).stem}]:\n{stm_content}")
-                        print(f"🧠 Adding STM to prompt: {Path(stm_file_path).stem}")
-                        for conv_sum_path in stm.get('constituent_summaries', []):
-                            processed_conv_summary_paths.add(str(Path(conv_sum_path)))
-                        if len(stms_added_to_prompt_content) >= MAX_STMS_TO_LOAD_IN_PROMPT:
-                            break
-            if stms_added_to_prompt_content:
-                final_memory_content_parts.extend(stms_added_to_prompt_content)
-
-            # 3. Load Latest Individual Conversation Summaries, excluding those already in STMs
-            # Fetch a bit more initially
-            conv_summaries_to_potentially_load = self.conversation_logger.get_latest_summaries(max_summaries=MAX_CONV_SUMMARIES_TO_LOAD_IN_PROMPT * 2)
-            conv_summaries_added_to_prompt_content = []
-            for conv_sum in reversed(conv_summaries_to_potentially_load): # Newest summary last
-                original_file_path = str(Path(conv_sum.get('file_path', conv_sum.get('original_file', 'unknown_conv_summary'))))
-                if original_file_path not in processed_conv_summary_paths:
-                    summary_content = ""
-                    if conv_sum.get('messages') and isinstance(conv_sum['messages'], list):
-                        for msg in conv_sum['messages']:
-                            if msg.get('role') == 'assistant' and msg.get('content'):
-                                summary_content = msg['content'].strip()
-                                break
-                    elif conv_sum.get('content'): # Fallback
-                        summary_content = conv_sum.get('content').strip()
-
-                    if summary_content:
-                        conv_summaries_added_to_prompt_content.append(f"[Previous Conversation Summary - ID: {Path(original_file_path).stem}]:\n{summary_content}")
-                        print(f"🧠 Adding Conv Summary to prompt: {Path(original_file_path).stem}")
-                        if len(conv_summaries_added_to_prompt_content) >= MAX_CONV_SUMMARIES_TO_LOAD_IN_PROMPT:
-                            break
-            if conv_summaries_added_to_prompt_content:
-                final_memory_content_parts.extend(conv_summaries_added_to_prompt_content)
-
-            # Construct the final system prompt
-            comprehensive_system_prompt = base_system_prompt
-            if final_memory_content_parts:
-                comprehensive_system_prompt += "\n\n" + memory_introduction + "\n".join(final_memory_content_parts)
-                print(f"✅ Incorporated {len(final_memory_content_parts)} memory entries into the system prompt.")
-            else:
-                print("No hierarchical memories available to add to system prompt.")
-
-            self.conversation_history = [{
-                "role": "system",
-                "content": comprehensive_system_prompt
-            }]
-            # print(f"[DEBUG] Final System Prompt:\n{comprehensive_system_prompt}") # For debugging
-
-        except Exception as e:
-            print(f"❌ Error loading hierarchical memories into system prompt: {e}")
-            # Fallback to just base system prompt if error
-            self.conversation_history = [{
-                "role": "system",
-                "content": self.llm.system_prompt # Use the original base prompt
-            }]
+        """Load hierarchical memory on startup"""
+        # Delegate to conversation manager
+        if hasattr(self.conversation_manager, '_load_hierarchical_memory'):
+            self.conversation_manager._load_hierarchical_memory()
