@@ -527,19 +527,45 @@ class VoiceAssistant:
         try:
             messages = []
             
-            # Add system prompt if configured
-            if self.system_prompt:
-                messages.append({"role": "system", "content": self.system_prompt})
+            # Get memory context first
+            memory_content = ""
+            if self.conversation_manager.logger and hasattr(self.conversation_manager, 'memory_manager'):
+                # Ensure unsummarized conversations are processed
+                self.conversation_manager._process_unsummarized_conversations()
+                
+                # Get memory hierarchy content
+                memory_content = self.conversation_manager._get_memory_hierarchy_content(10, 5, 5)
             
-            # Get context from conversation manager (includes memory hierarchy and recent history)
-            # Use the new signature with explicit counts: 10 recent summaries, 5 STMs, 5 LTMs
-            context_messages = self.conversation_manager.get_context_for_llm(
-                user_text,
-                max_recent_summaries=10,  # 10 most recent conversation summaries
-                max_stm_summaries=5,      # 5 most recent STM summaries
-                max_ltm_summaries=5       # 5 most recent LTM summaries
-            )
-            messages.extend(context_messages)
+            # Combine system prompt with memory context
+            if self.system_prompt:
+                combined_system_prompt = self.system_prompt
+                
+                if memory_content:
+                    combined_system_prompt += f"""
+
+====================
+MEMORY AND CONTEXT:
+====================
+You have access to the following information from previous conversations with this user. USE THIS INFORMATION to personalize your responses and maintain continuity:
+
+{memory_content}
+
+IMPORTANT INSTRUCTIONS:
+- Reference the user's name, preferences, and history from above naturally in your responses
+- Don't act like you're meeting them for the first time - you have a history together
+- Build upon past conversations and established relationship dynamics
+- Be consistent with previously learned facts about the user
+- Use this context to provide personalized, relevant responses
+====================
+"""
+                
+                messages.append({"role": "system", "content": combined_system_prompt})
+            
+            # Add recent conversation history (non-system messages)
+            if self.conversation_manager.history:
+                history_messages = [msg for msg in self.conversation_manager.history if msg['role'] != 'system']
+                recent_history = history_messages[-10:]  # Last 10 non-system messages
+                messages.extend(recent_history)
             
             # Add current user message
             messages.append({"role": "user", "content": user_text})
