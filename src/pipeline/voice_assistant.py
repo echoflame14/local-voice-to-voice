@@ -49,6 +49,13 @@ class VoiceAssistant:
         chunk_size: int = 1024,
         min_audio_amplitude: float = 0.015,  # Minimum amplitude threshold
         
+        # Input mode settings  
+        input_mode: str = "vad",  # "vad" or "push_to_talk"
+        vad_aggressiveness: int = 1,
+        vad_speech_threshold: float = 0.3,
+        vad_silence_threshold: float = 0.8,
+        push_to_talk_key: str = "space",
+        
         # Sound Effects settings
         enable_sound_effects: bool = True,
         sound_effect_volume: float = 0.2,
@@ -105,10 +112,15 @@ class VoiceAssistant:
             temperature=voice_temperature
         )
         
-        # Audio manager
+        # Audio manager with input mode support
+        # Use VAD-optimized chunk size for best performance
+        vad_chunk_size = 480 if input_mode == "vad" else chunk_size
         self.audio_manager = AudioStreamManager(
             sample_rate=sample_rate,
-            chunk_size=chunk_size
+            chunk_size=vad_chunk_size,
+            enable_performance_logging=True,
+            list_devices_on_init=False,
+            input_mode=input_mode
         )
         
         # State management
@@ -313,22 +325,33 @@ class VoiceAssistant:
         print("Voice Assistant stopped")
     
     def _audio_callback(self, audio_chunk: np.ndarray):
-        """Callback for incoming audio chunks"""
+        """Handle audio chunk from stream"""
         if not self.is_running:
             return
         
-        # Only process audio when spacebar is pressed
-        if self.ptt_active: # Changed from keyboard.is_pressed('space')
-            if not self.is_listening:
-                self._on_speech_start()
-            
-            # Check audio amplitude
-            audio_amplitude = np.abs(audio_chunk).mean()
-            if audio_amplitude >= self.min_audio_amplitude:
-                self.audio_buffer.append(audio_chunk)
-        elif self.is_listening:
-            # Spacebar released, end speech
-            self._on_speech_end()
+        # Handle audio based on input mode
+        if self.audio_manager.input_manager.input_mode == "push_to_talk":
+            # Check if we're in push-to-talk mode (Ctrl+Space)
+            if self.ptt_active:
+                if not self.is_listening:
+                    self._on_speech_start()
+                
+                # Check audio amplitude
+                audio_amplitude = np.abs(audio_chunk).mean()
+                if audio_amplitude >= self.min_audio_amplitude:
+                    self.audio_buffer.append(audio_chunk)
+            elif self.is_listening:
+                # Keys released, end speech
+                self._on_speech_end()
+        else:  # VAD mode
+            # In VAD mode, we receive complete utterances from the stream manager
+            if audio_chunk is not None and len(audio_chunk) > 0:
+                try:
+                    # Process the speech
+                    self._process_speech(audio_chunk)
+                except Exception as e:
+                    print(f"[VA ERROR] Error processing speech: {e}")
+                    traceback.print_exc()
     
     def _on_key_press(self, key):
         """Callback for key press events from pynput listener."""

@@ -107,6 +107,8 @@ def run_interactive_mode(assistant: VoiceAssistant):
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
+        print_status("\nShutting down...", "info")
+        assistant.stop()
         print_status("Goodbye!", "info")
 
 
@@ -156,9 +158,13 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python main.py                    # Run with default settings
-    python main.py --model large      # Use Whisper large model
-    python main.py --voice path.wav   # Use custom voice
+    python main.py                              # Run with default VAD mode
+    python main.py --input-mode push_to_talk    # Use push-to-talk mode
+    python main.py --model large                # Use Whisper large model
+    python main.py --voice path.wav             # Use custom voice
+    python main.py --text-mode                  # Run in text mode for testing
+    python main.py --vad-aggressiveness 2       # More aggressive voice detection
+    python main.py --ptt-key enter              # Use Enter key for push-to-talk
     """
     )
     
@@ -190,6 +196,33 @@ Examples:
     parser.add_argument(
         "--system-prompt",
         help="Custom system prompt for the LLM"
+    )
+    
+    parser.add_argument(
+        "--input-mode",
+        choices=["vad", "push_to_talk"],
+        default=config.INPUT_MODE,
+        help="Input mode: 'vad' for hands-free voice detection, 'push_to_talk' for manual control (default: vad)"
+    )
+    
+    parser.add_argument(
+        "--vad-aggressiveness",
+        type=int,
+        choices=[0, 1, 2, 3],
+        default=config.VAD_AGGRESSIVENESS,
+        help="VAD aggressiveness level: 0=least aggressive, 3=most aggressive (default: 1)"
+    )
+    
+    parser.add_argument(
+        "--ptt-key",
+        default=config.PUSH_TO_TALK_KEY,
+        help="Push-to-talk key (default: space)"
+    )
+    
+    parser.add_argument(
+        "--text-mode",
+        action="store_true",
+        help="Run in text mode for testing (no voice input)"
     )
     
     return parser.parse_args()
@@ -245,10 +278,10 @@ def main():
             whisper_device="cpu",  # Always use CPU for Whisper (faster for real-time)
             llm_base_url=args.llm_url,
             llm_api_key=config.LM_STUDIO_API_KEY,
-            gemini_api_key=config.GEMINI_API_KEY if config.GEMINI_API_KEY else None,
-            gemini_model=config.GEMINI_MODEL,
+            gemini_api_key=config.GEMINI_API_KEY if hasattr(config, 'GEMINI_API_KEY') and config.GEMINI_API_KEY else None,
+            gemini_model=config.GEMINI_MODEL if hasattr(config, 'GEMINI_MODEL') else "models/gemini-1.5-flash",
             system_prompt=args.system_prompt or config.SYSTEM_PROMPT,
-            voice_reference_path=str(config.VOICE_REFERENCE_PATH),  # Use command line arg or default WAV
+            voice_reference_path=args.voice or str(config.VOICE_REFERENCE_PATH),
             tts_device=args.device, # Pass device from command line
             enable_sound_effects=config.ENABLE_SOUND_EFFECTS,
             sound_effect_volume=config.SOUND_EFFECT_VOLUME,
@@ -258,6 +291,12 @@ def main():
             sample_rate=config.SAMPLE_RATE,
             chunk_size=config.CHUNK_SIZE,
             min_audio_amplitude=config.MIN_AUDIO_AMPLITUDE,
+            # Input mode settings
+            input_mode=args.input_mode,
+            vad_aggressiveness=args.vad_aggressiveness,
+            vad_speech_threshold=config.VAD_SPEECH_THRESHOLD,
+            vad_silence_threshold=config.VAD_SILENCE_THRESHOLD,
+            push_to_talk_key=args.ptt_key,
             enable_interruption_sound=config.ENABLE_INTERRUPTION_SOUND,
             enable_generation_sound=config.ENABLE_GENERATION_SOUND,
             max_response_tokens=config.MAX_RESPONSE_TOKENS,
@@ -270,19 +309,22 @@ def main():
         
         # Start the assistant
         print_status("\nStarting Voice Assistant...", "info")
-        print_status("Press Spacebar to talk, release to process", "info")
+        
+        # Show appropriate instructions based on input mode
+        if args.input_mode == "vad":
+            print_status("🎤 Voice Activity Detection enabled - just start talking!", "success")
+            print_status(f"VAD Sensitivity: {args.vad_aggressiveness}/3 (higher = more sensitive)", "info")
+        else:
+            print_status(f"🎮 Push-to-Talk mode - press '{args.ptt_key}' to talk", "success")
+        
         print_status("Press Ctrl+C to exit", "info")
         
-        assistant.start()
-        
-        # Keep main thread alive
-        try:
-            while True:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            print_status("\nShutting down...", "info")
-            assistant.stop()
-            sys.exit(0)
+        # Choose mode based on arguments
+        if args.text_mode:
+            run_text_mode(assistant)
+        else:
+            assistant.start()
+            run_interactive_mode(assistant)
             
     except Exception as e:
         print_status(f"Error initializing assistant: {e}", "error")

@@ -8,6 +8,11 @@ import sounddevice as sd
 import logging
 from dataclasses import dataclass
 from collections import deque
+from .input_manager import InputManager
+from configs.config import (
+    INPUT_MODE, VAD_AGGRESSIVENESS, VAD_SPEECH_THRESHOLD, 
+    VAD_SILENCE_THRESHOLD, PUSH_TO_TALK_KEY, CHUNK_SIZE
+)
 
 
 @dataclass
@@ -45,10 +50,12 @@ class AudioStreamManager:
     def __init__(
         self,
         sample_rate: int = 16000,
-        chunk_size: int = 1024,
+        chunk_size: int = CHUNK_SIZE,  # Use config value by default
         input_device: Optional[int] = None,
         output_device: Optional[int] = None,
-        enable_performance_logging: bool = True
+        enable_performance_logging: bool = True,
+        list_devices_on_init: bool = False,  # New parameter to control device listing
+        input_mode: str = INPUT_MODE,  # New parameter for input mode
     ):
         """
         Initialize audio stream manager
@@ -59,6 +66,8 @@ class AudioStreamManager:
             input_device: Input device index (None for default)
             output_device: Output device index (None for default)
             enable_performance_logging: Whether to enable detailed performance logging
+            list_devices_on_init: Whether to list audio devices during initialization
+            input_mode: Input mode ("vad" or "push_to_talk")
         """
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
@@ -93,6 +102,35 @@ class AudioStreamManager:
         self.is_playing = False
         self._stop_event = threading.Event()
         
+        # VAD state
+        self.vad_audio_buffer = []
+        self.is_speech_active = False
+        self.speech_start_time = None
+        self.min_speech_duration = 0.5   # Minimum duration in seconds for valid speech  
+        self.max_silence_duration = 1.5  # Maximum silence duration in seconds
+        self.last_speech_time = None
+        self.warmup_frames = 0
+        self.warmup_duration = int(0.5 * sample_rate / chunk_size)  # 0.5 seconds warmup
+        
+        # Input manager
+        self.input_manager = InputManager(
+            input_mode=input_mode,
+            vad_aggressiveness=VAD_AGGRESSIVENESS,
+            vad_speech_threshold=VAD_SPEECH_THRESHOLD,
+            vad_silence_threshold=VAD_SILENCE_THRESHOLD,
+            push_to_talk_key=PUSH_TO_TALK_KEY,
+            sample_rate=sample_rate,
+            on_input_start=self._on_input_start,
+            on_input_end=self._on_input_end
+        )
+        
+        # Ensure chunk size matches VAD frame size for optimal performance
+        if self.input_manager.vad:
+            expected_frame_size = self.input_manager.vad.frame_size
+            if chunk_size != expected_frame_size:
+                print(f"⚠️ Chunk size ({chunk_size}) doesn't match VAD frame size ({expected_frame_size})")
+                print(f"🔧 Consider using chunk_size={expected_frame_size} for optimal VAD performance")
+        
         # Streaming control
         self.current_streaming_thread = None
         self.cancel_streaming = threading.Event()
@@ -102,8 +140,9 @@ class AudioStreamManager:
             logging.basicConfig(level=logging.INFO)
             self.logger = logging.getLogger(__name__)
         
-        # List available devices on init
-        self.list_devices()
+        # List available devices on init if requested
+        if list_devices_on_init:
+            self.list_devices()
     
     def log_performance(self, message: str, level: str = "info"):
         """Log performance information"""
@@ -242,6 +281,14 @@ class AudioStreamManager:
             print(f"  - Sample Rate: {info['defaultSampleRate']} Hz")
             print()
     
+    def _on_input_start(self):
+        """Callback when input starts"""
+        pass
+    
+    def _on_input_end(self):
+        """Callback when input ends"""
+        pass
+    
     def start_input_stream(self, callback: Optional[Callable] = None):
         """
         Start audio input stream
@@ -256,24 +303,86 @@ class AudioStreamManager:
         self.is_recording = True
         
         def stream_callback(in_data, frame_count, time_info, status):
-            # Convert bytes to numpy array
-            audio_chunk = np.frombuffer(in_data, dtype=np.int16)
+            try:
+                # Convert input data to numpy array
+                audio_data = np.frombuffer(in_data, dtype=np.float32)
+                
+                # Handle warmup period
+                if self.warmup_frames < self.warmup_duration:
+                    self.warmup_frames += 1
+                    return (None, pyaudio.paContinue)
+                
+                # Convert to int16 for VAD
+                audio_data_int16 = (audio_data * 32767).astype(np.int16)
+                
+                if self.input_manager.input_mode == "vad":
+                    # Process through VAD
+                    should_capture = self.input_manager.process_audio(audio_data_int16)
+                    current_time = time.time()
+                    
+                    if should_capture:
+                        # Update last speech time
+                        self.last_speech_time = current_time
+                        
+                        # Ensure audio is normalized for Whisper
+                        max_val = np.abs(audio_data).max()
+                        if max_val > 1.0:
+                            audio_data = audio_data / max_val
+                        
+                        # Add to buffer
+                        self.vad_audio_buffer.append(audio_data)
+                        
+                        # If this is the first frame of speech, trigger start
+                        if not self.is_speech_active:
+                            self.speech_start_time = current_time
+                            self._on_input_start()
+                            self.is_speech_active = True
+                            print("🎤 Voice detected")
+                    elif self.is_speech_active:
+                        # Check if we've exceeded max silence duration
+                        if self.last_speech_time and (current_time - self.last_speech_time) >= self.max_silence_duration:
+                            # Speech ended, check duration and process if valid
+                            speech_duration = current_time - self.speech_start_time
+                            
+                            if speech_duration >= self.min_speech_duration and self.vad_audio_buffer:
+                                print("🔇 Voice ended")
+                                self._on_input_end()
+                                
+                                # Process the complete utterance
+                                complete_audio = np.concatenate(self.vad_audio_buffer)
+                                if self.input_callback:
+                                    self.input_callback(complete_audio)
+                            
+                            # Reset state regardless of duration
+                            self.is_speech_active = False
+                            self.vad_audio_buffer = []
+                            self.speech_start_time = None
+                            self.last_speech_time = None
+                        else:
+                            # Still within silence tolerance, keep buffering
+                            self.vad_audio_buffer.append(audio_data)
+                        
+                else:  # push_to_talk
+                    # In PTT mode, let the VoiceAssistant handle the audio
+                    should_capture = self.input_manager.process_audio(None)  # Just check PTT state
+                    if should_capture and self.input_callback:
+                        self.input_callback(audio_data)
+                
+                return (None, pyaudio.paContinue)
             
-            # Add to queue
-            self.input_queue.put(audio_chunk)
-            
-            # Call user callback if provided
-            if self.input_callback:
-                self.input_callback(audio_chunk)
-            
-            return (in_data, pyaudio.paContinue)
+            except Exception as e:
+                self.log_performance(f"Error in stream callback: {str(e)}", "error")
+                import traceback
+                traceback.print_exc()
+                return (None, pyaudio.paContinue)
         
         # Open stream
         self.input_stream = self.pa.open(
-            format=pyaudio.paInt16,
+            format=pyaudio.paFloat32,
             channels=1,
             rate=self.sample_rate,
             input=True,
+            output=False,
             input_device_index=self.input_device,
             frames_per_buffer=self.chunk_size,
             stream_callback=stream_callback
@@ -447,7 +556,10 @@ class AudioStreamManager:
         """Clean up resources"""
         self.stop_input_stream()
         self.stop_output_stream()
-        self.pa.terminate()
+        if self.input_manager:
+            self.input_manager.stop()
+        if self.pa:
+            self.pa.terminate()
         print("Audio streams cleaned up")
     
     def __enter__(self):

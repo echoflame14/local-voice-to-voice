@@ -3,18 +3,38 @@ import numpy as np
 from collections import deque
 from typing import Tuple, Optional
 import librosa
+from configs.config import (
+    VAD_AGGRESSIVENESS,
+    VAD_SPEECH_THRESHOLD,
+    VAD_SILENCE_THRESHOLD,
+    VAD_FRAME_DURATION_MS,
+    SAMPLE_RATE
+)
 
 
 class VoiceActivityDetector:
-    """Voice Activity Detection using WebRTC VAD"""
+    """Voice Activity Detection using WebRTC VAD
+    
+    The WebRTC VAD uses a Gaussian Mixture Model (GMM) with:
+    - 6 frequency channels
+    - 2 Gaussians per channel
+    - Aggressiveness modes 0-3 (0 = least aggressive, 3 = most aggressive)
+    
+    Recommended settings:
+    - Frame duration: 30ms (better than 10ms or 20ms)
+    - Sample rate: 16kHz (best quality/performance ratio)
+    - Aggressiveness: 1-2 (good balance between sensitivity and false positives)
+    - Speech threshold: 0.3 (ratio of speech frames to trigger speech)
+    - Silence threshold: 0.8 (ratio of silence frames to trigger silence)
+    """
     
     def __init__(
         self,
-        sample_rate: int = 16000,
-        frame_duration_ms: int = 30,
-        aggressiveness: int = 1,
-        speech_threshold: float = 0.5,
-        silence_threshold: float = 0.9,
+        sample_rate: int = SAMPLE_RATE,
+        frame_duration_ms: int = VAD_FRAME_DURATION_MS,
+        aggressiveness: int = VAD_AGGRESSIVENESS,
+        speech_threshold: float = VAD_SPEECH_THRESHOLD,
+        silence_threshold: float = VAD_SILENCE_THRESHOLD,
         ring_buffer_frames: int = None  # NEW: configurable buffer size for silence detection
     ):
         """
@@ -41,11 +61,11 @@ class VoiceActivityDetector:
         self.speech_threshold = speech_threshold
         self.silence_threshold = silence_threshold
         
-        # Initialize WebRTC VAD
+        # Initialize WebRTC VAD with recommended settings
         self.vad = webrtcvad.Vad(aggressiveness)
         
         # Ring buffer for smoothing decisions
-        # If not specified, use the historical default of 10 frames (~300 ms)
+        # If not specified, use 10 frames (~300 ms) which works well with 30ms frames
         if ring_buffer_frames is None:
             ring_buffer_frames = 10
 
@@ -73,29 +93,30 @@ class VoiceActivityDetector:
         # Convert to bytes for WebRTC VAD
         audio_bytes = audio_frame.astype(np.int16).tobytes()
         
-        # Detect speech
-        is_speech = self.vad.is_speech(audio_bytes, self.sample_rate)
-        
-        # Add to ring buffer
-        self.ring_buffer.append(1 if is_speech else 0)
-        
-        # Calculate speech ratio
-        if len(self.ring_buffer) < self.ring_buffer_size:
-            return is_speech, False
-        
-        speech_ratio = sum(self.ring_buffer) / len(self.ring_buffer)
-        
-        # Determine state change
-        old_state = self.is_speaking
-        
-        if not self.is_speaking and speech_ratio > self.speech_threshold:
-            self.is_speaking = True
-        elif self.is_speaking and speech_ratio < (1 - self.silence_threshold):
-            self.is_speaking = False
-        
-        state_changed = old_state != self.is_speaking
-        
-        return self.is_speaking, state_changed
+        try:
+            # Detect speech
+            is_speech = self.vad.is_speech(audio_bytes, self.sample_rate)
+            
+            # Add to ring buffer
+            self.ring_buffer.append(1 if is_speech else 0)
+            
+            # Calculate speech ratio
+            speech_ratio = sum(self.ring_buffer) / len(self.ring_buffer)
+            
+            # Check if state changed
+            was_speech = self.is_speaking
+            if speech_ratio >= self.speech_threshold and not self.is_speaking:
+                self.is_speaking = True
+                return True, True
+            elif speech_ratio <= self.silence_threshold and self.is_speaking:
+                self.is_speaking = False
+                return False, True
+            
+            return self.is_speaking, False
+            
+        except Exception as e:
+            print(f"[VAD ERROR] Error processing frame: {e}")
+            return False, False
     
     def process_audio(
         self,
@@ -166,7 +187,12 @@ class VoiceActivityDetector:
     
     @staticmethod
     def resample_for_vad(audio: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-        """Resample audio for VAD processing"""
+        """
+        Resample audio for VAD processing
+        
+        WebRTC VAD works best with 16kHz audio. This method helps ensure
+        optimal audio format.
+        """
         if orig_sr == target_sr:
             return audio
         
