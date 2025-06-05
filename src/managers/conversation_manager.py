@@ -263,11 +263,62 @@ class ConversationManager:
     
     def _process_unsummarized_conversations(self):
         """Process any unsummarized conversations."""
-        if not self.memory_manager:
+        if not self.logger:
             return
         
         try:
-            self.memory_manager.process_unsummarized_conversations()
+            # Process unsummarized conversations using the conversation logger
+            unsummarized = self.logger.get_unsummarized_conversations()
+            if unsummarized:
+                print(f"🔄 Found {len(unsummarized)} new conversations to summarize individually")
+                current_file = str(self.logger.current_log_file)
+                
+                for filepath in unsummarized:
+                    # Skip the current conversation file
+                    if filepath == current_file:
+                        print(f"⏩ Skipping current active conversation: {filepath}")
+                        continue
+                        
+                    try:
+                        print(f"\n📝 Summarizing new conversation: {filepath}")
+                        conversation = self.logger.load_conversation_file(filepath)
+                        
+                        # Only summarize if there are messages
+                        if conversation:
+                            print("🤖 Generating summary (streaming):")
+                            print("=" * 60)
+                            
+                            # Stream the summary generation and collect chunks
+                            summary_chunks = []
+                            for chunk in self.summarizer.stream_summarize_conversation(conversation):
+                                print(chunk, end='', flush=True)
+                                summary_chunks.append(chunk)
+                            print("\n" + "=" * 60)
+                            
+                            # Create summary message
+                            summary_text = "".join(summary_chunks).strip()
+                            if not summary_text:
+                                print("⚠️ Empty summary generated, using fallback")
+                                summary_messages = self.summarizer._fallback_summary(conversation)
+                            else:
+                                summary_messages = [{
+                                    "role": "assistant",
+                                    "content": summary_text
+                                }]
+                            
+                            # Save the summary
+                            summary_file = self.logger.save_conversation_summary(filepath, summary_messages)
+                            print(f"✅ Created new summary: {summary_file}")
+                            
+                            # Debug output
+                            print("\n[DEBUG] Generated summary:")
+                            print(f"  {summary_text[:500]}{'...' if len(summary_text) > 500 else ''}")
+                            
+                    except Exception as e:
+                        print(f"⚠️ Error summarizing {filepath}: {e}")
+            else:
+                print("✨ No new individual conversations to summarize")
+                
         except Exception as e:
             print(f"⚠️ Error processing unsummarized conversations: {e}")
     
@@ -278,7 +329,9 @@ class ConversationManager:
         
         try:
             print("🧠 Loading hierarchical memory...")
-            self.memory_manager.load_hierarchical_memory()
+            # Update memory hierarchy to build STMs and LTMs from existing summaries
+            self.memory_manager.update_memory_hierarchy()
+            print("✅ Memory hierarchy updated.")
         except Exception as e:
             print(f"⚠️ Error loading hierarchical memory: {e}")
     
