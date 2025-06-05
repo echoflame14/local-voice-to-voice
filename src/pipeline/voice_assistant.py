@@ -151,6 +151,9 @@ class VoiceAssistant:
         self.llm_base_url = config.llm.base_url
         self.llm_api_key = config.llm.api_key
         
+        # Store system prompt for message preparation
+        self.system_prompt = config.llm.system_prompt
+        
         # TTS
         print("Loading Chatterbox TTS...")
         self.tts = ChatterboxTTSWrapper(

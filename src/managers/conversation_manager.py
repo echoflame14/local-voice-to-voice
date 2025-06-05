@@ -5,6 +5,7 @@ This module extracts conversation-related functionality from VoiceAssistant
 to implement the Single Responsibility Principle.
 """
 
+import json
 from typing import List, Dict, Optional
 from ..config import ConversationConfig, LLMConfig
 from ..pipeline.conversation_logger import ConversationLogger
@@ -313,7 +314,12 @@ class ConversationManager:
                             # Debug output
                             print("\n[DEBUG] Generated summary:")
                             print(f"  {summary_text[:500]}{'...' if len(summary_text) > 500 else ''}")
+                        else:
+                            print(f"⚠️ Skipping {filepath} - no valid conversation data found")
                             
+                    except json.JSONDecodeError as e:
+                        print(f"⚠️ Error parsing JSON in {filepath}: {e}")
+                        print(f"   File may be corrupted. Consider moving it to a backup location.")
                     except Exception as e:
                         print(f"⚠️ Error summarizing {filepath}: {e}")
             else:
