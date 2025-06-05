@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Voice-to-Voice Chatbot using Chatterbox TTS and LM Studio
+Voice-to-Voice Chatbot using Chatterbox TTS and configurable LLM (Gemini AI or LM Studio)
 
 Usage:
     python main.py                          # Run with default settings
@@ -11,9 +11,14 @@ Usage:
 import argparse
 import sys
 import signal
+import warnings
+import json
 from pathlib import Path
 import time
 from dotenv import load_dotenv
+
+# Suppress PyTorch deprecation warnings
+warnings.filterwarnings("ignore", message=".*torch.backends.cuda.sdp_kernel.*", category=FutureWarning)
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,11 +33,22 @@ init()
 
 def print_banner():
     """Print application banner"""
+    # Determine which LLM provider is being used
+    if config.USE_GEMINI and config.GEMINI_API_KEY:
+        llm_provider = "Gemini AI"
+    else:
+        llm_provider = "LM Studio"
+    
+    # Format the powered-by line to be centered properly
+    powered_by_text = f"Powered by Chatterbox TTS + {llm_provider} + OpenAI Whisper"
+    padding = (62 - len(powered_by_text)) // 2  # Center within 62 character width
+    powered_by_line = f"║{' ' * padding}{powered_by_text}{' ' * (62 - len(powered_by_text) - padding)}║"
+    
     banner = f"""
 {Fore.CYAN}╔══════════════════════════════════════════════════════════════╗
 ║                  🎤 Voice Chatbot Assistant 🎤               ║
 ║                                                              ║
-║  Powered by Chatterbox TTS + LM Studio + OpenAI Whisper     ║
+{powered_by_line}
 ║                                                              ║
 ║  Commands:                                                   ║
 ║    - Just speak naturally to chat                           ║
@@ -190,7 +206,7 @@ Examples:
     parser.add_argument(
         "--llm-url",
         default=config.LM_STUDIO_BASE_URL,
-        help="LM Studio API URL"
+        help="LLM API URL (for LM Studio fallback)"
     )
     
     parser.add_argument(
@@ -241,6 +257,36 @@ def check_cuda():
         print_status("PyTorch not installed, using CPU", "warning")
 
 
+def cleanup_empty_conversation_logs():
+    """Clean up empty conversation log files on startup"""
+    try:
+        conversation_logs_dir = Path(config.CONVERSATION_LOG_DIR)
+        if not conversation_logs_dir.exists():
+            return
+        
+        deleted_count = 0
+        for log_file in conversation_logs_dir.glob("conversation_*.json"):
+            try:
+                # Check if file contains only empty array
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    
+                # Check for empty JSON array
+                if content == "[]" or content == "[ ]" or content == "":
+                    log_file.unlink()
+                    deleted_count += 1
+                    print_status(f"Deleted empty conversation log: {log_file.name}", "info")
+                    
+            except (json.JSONDecodeError, OSError) as e:
+                print_status(f"Error checking {log_file.name}: {e}", "warning")
+                
+        if deleted_count > 0:
+            print_status(f"Cleaned up {deleted_count} empty conversation log(s)", "success")
+            
+    except Exception as e:
+        print_status(f"Error during conversation log cleanup: {e}", "warning")
+
+
 def load_config():
     """Load and validate configuration"""
     try:
@@ -266,41 +312,71 @@ def main():
     # Print startup banner
     print_banner()
     
+    # Show LLM provider information
+    if config.USE_GEMINI and config.GEMINI_API_KEY:
+        print_status(f"Using LLM Provider: Gemini AI ({config.GEMINI_MODEL})", "info")
+    elif config.USE_GEMINI and not config.GEMINI_API_KEY:
+        print_status("Gemini enabled but no API key found - falling back to LM Studio", "warning")
+        print_status(f"Using LLM Provider: LM Studio ({config.LM_STUDIO_BASE_URL})", "info")
+    else:
+        print_status(f"Using LLM Provider: LM Studio ({config.LM_STUDIO_BASE_URL})", "info")
+    
     # Check CUDA availability
     check_cuda()
+    
+    # Clean up empty conversation logs
+    cleanup_empty_conversation_logs()
     
     # Initialize assistant
     try:
         print_status("Initializing Voice Assistant...", "info")
         
         assistant = VoiceAssistant(
+            # STT settings
             whisper_model_size=args.model,
-            whisper_device="cpu",  # Always use CPU for Whisper (faster for real-time)
+            whisper_device=config.WHISPER_DEVICE,
+            
+            # LLM settings  
+            use_gemini=config.USE_GEMINI,
             llm_base_url=args.llm_url,
             llm_api_key=config.LM_STUDIO_API_KEY,
-            gemini_api_key=config.GEMINI_API_KEY if hasattr(config, 'GEMINI_API_KEY') and config.GEMINI_API_KEY else None,
-            gemini_model=config.GEMINI_MODEL if hasattr(config, 'GEMINI_MODEL') else "models/gemini-1.5-flash",
+            gemini_api_key=config.GEMINI_API_KEY,
+            gemini_model=config.GEMINI_MODEL,
             system_prompt=args.system_prompt or config.SYSTEM_PROMPT,
+            
+            # TTS settings
+            tts_device=args.device or config.TTS_DEVICE,
             voice_reference_path=args.voice or str(config.VOICE_REFERENCE_PATH),
-            tts_device=args.device, # Pass device from command line
-            enable_sound_effects=config.ENABLE_SOUND_EFFECTS,
-            sound_effect_volume=config.SOUND_EFFECT_VOLUME,
             voice_exaggeration=config.VOICE_EXAGGERATION,
             voice_cfg_weight=config.VOICE_CFG_WEIGHT,
             voice_temperature=config.VOICE_TEMPERATURE,
+            
+            # Audio settings
             sample_rate=config.SAMPLE_RATE,
             chunk_size=config.CHUNK_SIZE,
             min_audio_amplitude=config.MIN_AUDIO_AMPLITUDE,
+            
             # Input mode settings
             input_mode=args.input_mode,
             vad_aggressiveness=args.vad_aggressiveness,
             vad_speech_threshold=config.VAD_SPEECH_THRESHOLD,
             vad_silence_threshold=config.VAD_SILENCE_THRESHOLD,
             push_to_talk_key=args.ptt_key,
+            
+            # Sound effects settings
+            enable_sound_effects=config.ENABLE_SOUND_EFFECTS,
+            sound_effect_volume=config.SOUND_EFFECT_VOLUME,
             enable_interruption_sound=config.ENABLE_INTERRUPTION_SOUND,
             enable_generation_sound=config.ENABLE_GENERATION_SOUND,
+            
+            # Conversation settings
             max_response_tokens=config.MAX_RESPONSE_TOKENS,
-            llm_temperature=config.LLM_TEMPERATURE
+            llm_temperature=config.LLM_TEMPERATURE,
+            log_conversations=config.LOG_CONVERSATIONS,
+            conversation_log_dir=config.CONVERSATION_LOG_DIR,
+            max_history_messages=config.MAX_HISTORY_MESSAGES,
+            auto_summarize_conversations=config.AUTO_SUMMARIZE_CONVERSATIONS,
+            max_summaries_to_load=config.MAX_SUMMARIES_TO_LOAD
         )
         
         # Setup callbacks and signal handlers

@@ -86,6 +86,65 @@ class GeminiLLM:
                  print(f"Underlying response: {e.response}")
             return "I'm sorry, there was an issue generating a response."
 
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int = 4096, temperature: float = 0.7) -> str:
+        """
+        Chat with conversation history (non-streaming)
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            
+        Returns:
+            Generated response
+        """
+        # Extract system prompt if present
+        current_system_prompt = self.system_prompt
+        history_messages = messages
+
+        # If first message is system message, use it as system instruction
+        if messages and messages[0]["role"] == "system":
+            current_system_prompt = messages[0]["content"]
+            history_messages = messages[1:]  # Remove system message from history
+        
+        # Create model with system instruction
+        model_to_use = genai.GenerativeModel(
+            self._model_name,
+            system_instruction=current_system_prompt,
+            safety_settings=self.safety_settings
+        )
+        
+        # Convert remaining messages to Gemini format
+        gemini_history = self._build_messages(history_messages)
+        
+        generation_config = genai_types.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=temperature
+        )
+        
+        try:
+            response = model_to_use.generate_content(
+                contents=gemini_history,
+                generation_config=generation_config
+            )
+            if response.text:
+                return response.text.strip()
+            else:
+                # Check for empty response due to safety or other reasons
+                print(f"Warning: Gemini chat() returned no text. Finish reason: {response.candidates[0].finish_reason if response.candidates else 'Unknown'}")
+                for candidate in response.candidates:
+                    print(f"Candidate: {candidate}") # Log candidate details
+                return "I'm sorry, I couldn't generate a response."
+        except genai_types.BlockedPromptException as e:
+            print(f"Error: Gemini chat() prompt was blocked. {e}")
+            return "I am unable to respond to that due to safety guidelines."
+        except Exception as e:
+            print(f"Error during Gemini chat(): {e}")
+            # Attempt to get more details if it's a BlockedPromptException or similar
+            if hasattr(e, 'response') and e.response:
+                 print(f"Underlying response: {e.response}")
+            return "I'm sorry, there was an issue generating a response."
+
     def stream_chat(self, messages: List[Dict[str, str]], max_tokens: int = 4096, temperature: float = 0.7) -> Generator[str, None, None]:
         # Extract system prompt if present
         current_system_prompt = self.system_prompt

@@ -30,7 +30,7 @@ class VoiceAssistant:
         whisper_device: str = None,
         
         # LLM settings
-        use_gemini: bool = False,  # NEW: Toggle for Gemini vs LM Studio
+        use_gemini: bool = True,  # NEW: Toggle for Gemini vs LM Studio
         llm_base_url: str = "http://localhost:1234/v1",
         llm_api_key: str = "not-needed",
         gemini_api_key: str = None,
@@ -86,17 +86,27 @@ class VoiceAssistant:
         self.stt = WhisperSTT(model_size=whisper_model_size, device=whisper_device)
         
         # LLM selection
-        from ..llm import OpenAICompatibleLLM
-        print("Connecting to LM Studio...")
-        self.llm = OpenAICompatibleLLM(
-            base_url=llm_base_url,  # Use direct parameter
-            api_key=llm_api_key,    # Use direct parameter
-            model=None,
-            system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
-        )
+        if use_gemini and gemini_api_key:
+            from ..llm import GeminiLLM
+            print("Connecting to Gemini...")
+            self.llm = GeminiLLM(
+                api_key=gemini_api_key,
+                model=gemini_model,
+                system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
+            )
+            self.use_gemini = True
+        else:
+            from ..llm import OpenAICompatibleLLM
+            print("Connecting to LM Studio...")
+            self.llm = OpenAICompatibleLLM(
+                base_url=llm_base_url,  # Use direct parameter
+                api_key=llm_api_key,    # Use direct parameter
+                model=None,
+                system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
+            )
+            self.use_gemini = False
         
         # Store LLM choice for summarizer
-        self.use_gemini = False # Set to False as we are using LM Studio
         self.gemini_api_key = gemini_api_key
         self.gemini_model = gemini_model
         self.llm_base_url = llm_base_url # Assignment remains for other parts of the class
@@ -136,7 +146,8 @@ class VoiceAssistant:
         self.is_continuation = False
         
         # Grace period to prevent immediate interruptions after starting synthesis
-        self.synthesis_grace_period = 1.5
+        from configs import config as app_config
+        self.synthesis_grace_period = app_config.SYNTHESIS_GRACE_PERIOD
         self.synthesis_start_time = None
         
         # Audio buffers
@@ -184,13 +195,22 @@ class VoiceAssistant:
             # if it has a very specific system prompt or character.
             # It's better to use a dedicated summarization model or a general model with a summarization prompt.
             
-            # For now, we'll create a new LM Studio instance with a dedicated summarization prompt.
-            summarizer_llm = OpenAICompatibleLLM( # Changed from GeminiLLM
-                base_url=llm_base_url,    # Use direct parameter
-                api_key=llm_api_key,      # Use direct parameter
-                model=None,           # Changed "local-model" to None
-                system_prompt="You are an expert conversation summarizer. Your task is to create concise, neutral, and informative summaries of conversations, focusing on key points, decisions, and outcomes. Preserve all critical context. For meta-summaries (summaries of summaries), synthesize the information into a coherent narrative, identifying overarching themes and long-term takeaways."
-            )
+            # Create a summarizer LLM using the same provider as the main LLM
+            from configs import config
+            if self.use_gemini and gemini_api_key:
+                from ..llm import GeminiLLM
+                summarizer_llm = GeminiLLM(
+                    api_key=gemini_api_key,
+                    model=gemini_model,
+                    system_prompt=config.SUMMARIZER_SYSTEM_PROMPT
+                )
+            else:
+                summarizer_llm = OpenAICompatibleLLM(
+                    base_url=llm_base_url,    # Use direct parameter
+                    api_key=llm_api_key,      # Use direct parameter
+                    model=None,           # Changed "local-model" to None
+                    system_prompt=config.SUMMARIZER_SYSTEM_PROMPT
+                )
             self.conversation_summarizer = ConversationSummarizer(summarizer_llm)
             self.hierarchical_memory_manager = HierarchicalMemoryManager(
                 self.conversation_logger, 
@@ -1351,4 +1371,3 @@ class VoiceAssistant:
                 "role": "system",
                 "content": self.llm.system_prompt # Use the original base prompt
             }]
-    

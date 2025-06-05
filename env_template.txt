@@ -1,50 +1,29 @@
-# Voice Assistant Configuration Template
-# Copy this to .env and customize as needed
+# Voice Assistant Environment Variables
+# Copy this file to .env and set your API keys
 
-# === INPUT MODE SETTINGS ===
-# Choose input mode: "vad" for hands-free voice detection, "push_to_talk" for manual control
-INPUT_MODE=vad
+# ============================================================================
+# API KEYS (Required)
+# ============================================================================
 
-# === VAD (Voice Activity Detection) Settings ===
-# VAD Aggressiveness: 0=least aggressive, 3=most aggressive (recommended: 1-2)
-VAD_AGGRESSIVENESS=1
-# Speech threshold: ratio of speech frames to trigger speech start (0.0-1.0)
-VAD_SPEECH_THRESHOLD=0.3
-# Silence threshold: ratio of silence frames to trigger speech end (0.0-1.0)  
-VAD_SILENCE_THRESHOLD=0.8
-# Frame duration in milliseconds (10, 20, or 30 - recommended: 30)
-VAD_FRAME_DURATION_MS=30
+# Gemini API Key (get from https://ai.google.dev/)
+# This is required if using Gemini (which is the default)
+GEMINI_API_KEY=your_gemini_api_key_here
 
-# === Push-to-Talk Settings ===
-# Key to press for push-to-talk mode (space, enter, tab, etc.)
-PUSH_TO_TALK_KEY=space
+# ============================================================================
+# OPTIONAL OVERRIDES
+# ============================================================================
 
-# === LLM SETTINGS ===
-LM_STUDIO_BASE_URL=http://localhost:1234/v1
-LM_STUDIO_API_KEY=not-needed
-MAX_RESPONSE_TOKENS=300
-LLM_TEMPERATURE=0.85
+# You can override any setting from config.py here if needed
+# For example:
+# WHISPER_MODEL_SIZE=small
+# USE_GEMINI=False
+# MAX_RESPONSE_TOKENS=500
 
-# === AUDIO SETTINGS ===
-SAMPLE_RATE=16000
-CHUNK_SIZE=480
-MIN_AUDIO_AMPLITUDE=0.015
+# ============================================================================
+# INSTRUCTIONS
+# ============================================================================
 
-# === TTS SETTINGS ===
-TTS_DEVICE=cuda
-VOICE_REFERENCE_PATH=./voices/default.wav
-VOICE_EXAGGERATION=0.5
-VOICE_CFG_WEIGHT=0.5
-VOICE_TEMPERATURE=0.8
-
-# === WHISPER SETTINGS ===
-WHISPER_MODEL_SIZE=base
-
-# === SOUND EFFECTS ===
-ENABLE_SOUND_EFFECTS=True
-SOUND_EFFECT_VOLUME=0.2
-ENABLE_INTERRUPTION_SOUND=True
-ENABLE_GENERATION_SOUND=True
-
-# === SYSTEM PROMPT ===
-SYSTEM_PROMPT=You are a helpful voice assistant. Keep your responses concise and natural for speech. Respond in a conversational tone and avoid overly long explanations unless specifically asked. 
+# 1. Set your GEMINI_API_KEY above
+# 2. All other settings can be modified in configs/config.py
+# 3. Only add settings here if you need to override config.py values
+# 4. Restart the application after making changes 
