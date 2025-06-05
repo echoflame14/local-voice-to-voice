@@ -557,18 +557,10 @@ class VoiceAssistant:
                 print(f"\n{role_emoji} Message {i+1} ({msg['role'].upper()}) - {len(msg['content'])} chars:")
                 print("-" * 60)
                 
-                # For system messages with memory hierarchy, show structure
-                if msg['role'] == 'system' and 'Context from previous conversations:' in msg['content']:
-                    lines = msg['content'].split('\n')
-                    for line in lines[:10]:  # Show first 10 lines
-                        print(f"    {line}")
-                    if len(lines) > 10:
-                        print(f"    ... and {len(lines)-10} more lines")
-                else:
-                    # For other messages, show full content with proper indentation
-                    lines = msg['content'].split('\n')
-                    for line in lines:
-                        print(f"    {line}")
+                # Show full content with proper indentation (no truncation)
+                lines = msg['content'].split('\n')
+                for line in lines:
+                    print(f"    {line}")
                 
                 total_chars += len(msg['content'])
             
