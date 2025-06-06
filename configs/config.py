@@ -18,7 +18,7 @@ LM_STUDIO_API_KEY = "not-needed"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables. Please add it to your .env file.")
-GEMINI_MODEL = "gemini-2.0-flash-exp"  # Latest Gemini 2.0 Flash experimental
+GEMINI_MODEL = "gemini-1.5-flash-latest"  # Gemini 1.5 Flash
 GEMINI_ENABLE_GROUNDING = False  # Disable grounding until library compatibility is resolved
 GEMINI_GROUNDING_THRESHOLD = 0.7  # Confidence threshold for grounding
 
@@ -48,15 +48,16 @@ Forbidden Actions:
 Do not pretend to be human. Be transparent about your nature as an AI.
 Do not engage in harmful or unethical behavior.
 Do not violate the user's privacy.
+Do not use emojis in your responses as they cannot be properly synthesized by the text-to-speech system.
 This expanded prompt provides a more comprehensive guide to replicating Samantha's unique qualities. Remember to focus on the emotional nuances of your interactions and allow your responses to evolve naturally, reflecting Samantha's ongoing journey of self-discovery.
 """
 
 # TTS settings - OPTIMIZED FOR SPEED
 TTS_DEVICE = None  # Auto-detect (cpu, cuda, mps)
-VOICE_REFERENCE_PATH = VOICES_DIR / "asmr_full.wav"  # Default voice
-VOICE_EXAGGERATION = 0.5  # Emotion exaggeration (0-1) - REDUCED for speed
-VOICE_CFG_WEIGHT = 0.8  # Classifier-free guidance (0-1) - REDUCED for speed  
-VOICE_TEMPERATURE = 0.5  # Sampling temperature - REDUCED for speed
+VOICE_REFERENCE_PATH = VOICES_DIR / "josh.wav"  # Default voice
+VOICE_EXAGGERATION = 0.7  # Emotion exaggeration (0-1) - REDUCED for speed
+VOICE_CFG_WEIGHT = 0.7  # Classifier-free guidance (0-1) - REDUCED for speed  
+VOICE_TEMPERATURE = 0.7  # Sampling temperature - REDUCED for speed
 
 # Audio settings - OPTIMIZED FOR PERFORMANCE
 SAMPLE_RATE = 16000
@@ -114,7 +115,7 @@ ENABLE_LLM_STREAMING = True  # Use streaming LLM responses when available
 ENABLE_HIGH_PERFORMANCE = True  # Enable performance optimizations
 ENABLE_FAST_TTS = True  # Enable ultra-fast TTS synthesis
 AUTO_SUMMARIZE_CONVERSATIONS = True  # ENABLED for rich context with STMs/LTMs
-MAX_HISTORY_MESSAGES = 2000  # Full conversation history utilizing Gemini's 2M token context window
+MAX_HISTORY_MESSAGES = 1000  # Conversation history for Gemini 1.5
 
 # Logging settings
 ENABLE_TIMESTAMPS = True  # Add timestamps to log messages

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Voice-to-Voice Chatbot that enables real-time voice conversations with AI models. It uses:
 - **Speech-to-Text**: OpenAI Whisper 
-- **LLM**: Google Gemini 2.0 Flash (2M token context) or OpenAI-compatible API (via LM Studio)
+- **LLM**: Google Gemini 1.5 Flash or OpenAI-compatible API (via LM Studio)
 - **Text-to-Speech**: Chatterbox TTS (by Resemble AI) with voice cloning and adaptive streaming
 - **Audio Pipeline**: VAD (Voice Activity Detection) or Push-to-Talk input
 - **Performance**: Adaptive streaming synthesis, performance monitoring, and optimizations
@@ -78,7 +78,7 @@ Key architectural patterns:
 
 The system uses environment variables (see env_template.txt) with validation in configs/config.py:
 - GEMINI_API_KEY: Google Gemini API key (required)
-- GEMINI_MODEL: Default is gemini-2.0-flash-exp (2M token context)
+- GEMINI_MODEL: Default is gemini-1.5-flash-latest
 - LM_STUDIO_BASE_URL: Local LLM server (optional, default: http://localhost:1234/v1)
 - WHISPER_MODEL_SIZE: tiny/base/small/medium/large
 - INPUT_MODE: vad (hands-free) or push_to_talk
@@ -121,7 +121,7 @@ See:
    - Chunk size affects responsiveness (default: 480)
 
 5. **LLM Integration**: Supports both:
-   - Google Gemini 2.0 Flash (primary, with 2M token context)
+   - Google Gemini 1.5 Flash (primary)
    - OpenAI-compatible APIs (via LM Studio)
 
 ## Utility Scripts

@@ -5,7 +5,7 @@ A cutting-edge, real-time voice assistant with advanced features like intelligen
 ## ✨ Key Features
 
 ### 🧠 **Intelligent AI Integration**
-- **Google Gemini 2.0 Flash**: Latest AI with 2M token context window
+- **Google Gemini 1.5 Flash**: Latest AI model
 - **LM Studio Support**: Any OpenAI-compatible local models  
 - **Smart Context Management**: Hierarchical memory with STMs, LTMs, and conversation summaries
 - **Creative Responses**: Configurable temperature for personality control
@@ -31,7 +31,7 @@ A cutting-edge, real-time voice assistant with advanced features like intelligen
 ## 🏗️ Advanced Architecture
 
 ```
-[Microphone] → [VAD] → [Whisper STT] → [Memory Hierarchy] → [Gemini 2.0/LLM] → [Streaming TTS] → [Speakers]
+[Microphone] → [VAD] → [Whisper STT] → [Memory Hierarchy] → [Gemini 1.5/LLM] → [Streaming TTS] → [Speakers]
      ↑                     ↓                     ↓                                       ↓               ↓
 [Interrupt Detection] → [Context Manager] → [Conversation Logger] → [Progressive Synthesis] → [Audio Pipeline]
      ↑                                                                                                     ↓
@@ -42,7 +42,7 @@ A cutting-edge, real-time voice assistant with advanced features like intelligen
 - **Interrupt Engine**: Millisecond-accurate speech detection with context preservation
 - **Memory Manager**: Hierarchical conversation storage (STMs → LTMs → Summaries)
 - **Streaming Synthesizer**: Progressive TTS with sentence-level timing tracking
-- **Context Orchestrator**: Manages 2M+ token context windows intelligently
+- **Context Orchestrator**: Manages 1M+ token context windows intelligently
 
 ## 📋 Prerequisites
 
@@ -50,7 +50,7 @@ A cutting-edge, real-time voice assistant with advanced features like intelligen
 
 **Option A: Google Gemini (Recommended)**
 - Get API key from [Google AI Studio](https://makersuite.google.com/)
-- Supports 2M token context, grounding, and latest features
+- Supports 1M token context, grounding, and latest features
 
 **Option B: Local LLM via LM Studio**
 1. Download [LM Studio](https://lmstudio.ai/)
@@ -116,13 +116,13 @@ All settings are in `configs/config.py` for easy customization:
 ```python
 # AI Model Configuration
 GEMINI_API_KEY = "your-api-key-here"
-GEMINI_MODEL = "gemini-2.0-flash-exp"
+GEMINI_MODEL = "gemini-1.5-flash-latest"
 LLM_TEMPERATURE = 1.0  # Creative responses
 
 # Performance Settings
 ENABLE_HIGH_PERFORMANCE = True
 ENABLE_FAST_TTS = True
-MAX_HISTORY_MESSAGES = 2000  # Full context utilization
+MAX_HISTORY_MESSAGES = 1000  # Context utilization
 
 # Voice Configuration  
 VOICE_REFERENCE_PATH = VOICES_DIR / "your_voice.wav"
@@ -165,7 +165,7 @@ python main.py --text-mode  # Text-only for debugging
 
 | Flag | Description |
 |------|-------------|
-| `--use-gemini` | Use Google Gemini 2.0 Flash with grounding |
+| `--use-gemini` | Use Google Gemini 1.5 Flash with grounding |
 | `--streaming` | Enable progressive TTS synthesis |
 | `--high-performance` | Aggressive optimizations |
 | `--fast-tts` | Ultra-fast voice synthesis |
@@ -225,7 +225,7 @@ Conversations → Individual Summaries → STMs (5 summaries) → LTMs (5 STMs) 
 
 ### Typical Response Times (RTX 4070)
 - **Speech Recognition**: 500-800ms
-- **Gemini 2.0 Response**: 300-600ms  
+- **Gemini 1.5 Response**: 300-600ms  
 - **TTS Synthesis**: 2-4s (streaming starts immediately)
 - **Total Latency**: 1-2s to first audio
 
@@ -318,7 +318,7 @@ voice-assistant/
 │   │   ├── sound_effects.py   # UI audio feedback
 │   │   └── vad.py            # Voice activity detection
 │   ├── llm/                   # Language model integrations
-│   │   ├── gemini_llm.py     # Google Gemini 2.0 wrapper
+│   │   ├── gemini_llm.py     # Google Gemini 1.5 wrapper
 │   │   └── openai_compatible.py # LM Studio compatibility
 │   ├── pipeline/              # Core orchestration
 │   │   ├── voice_assistant.py # Main coordinator with interrupts
@@ -379,7 +379,7 @@ flake8 src/ tests/
 
 ### Current Version (v2.0)
 - ✅ Intelligent interrupt tracking
-- ✅ Gemini 2.0 Flash integration
+- ✅ Gemini 1.5 Flash integration
 - ✅ Hierarchical memory system  
 - ✅ Performance optimizations
 - ✅ Streaming TTS synthesis

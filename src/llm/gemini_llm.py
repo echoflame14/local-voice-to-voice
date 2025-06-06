@@ -3,9 +3,9 @@ from typing import List, Dict, Generator, Optional
 import google.generativeai.types as genai_types
 
 class GeminiLLM:
-    """Enhanced LLM wrapper for Google's Gemini 2.0 Flash with grounding capabilities."""
+    """Enhanced LLM wrapper for Google's Gemini 1.5 Flash with grounding capabilities."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp", system_prompt: str = None, 
+    def __init__(self, api_key: str, model: str = "gemini-1.5-flash-latest", system_prompt: str = None, 
                  enable_grounding: bool = True, grounding_threshold: float = 0.7):
         genai.configure(api_key=api_key)
         self._model_name = model
@@ -32,19 +32,19 @@ class GeminiLLM:
             try:
                 # Try the newest API for grounding (updated field name)
                 self.tools = [{"google_search": {}}]
-                print(f"✅ Gemini 2.0 Flash with Google Search grounding enabled (threshold: {self.grounding_threshold})")
+                print(f"✅ Gemini 1.5 Flash with Google Search grounding enabled (threshold: {self.grounding_threshold})")
             except Exception as e:
                 try:
                     # Fallback: Try alternative grounding configurations
                     from google.generativeai import tools as genai_tools
                     self.tools = [genai_tools.GoogleSearchRetrieval()]
-                    print(f"✅ Gemini 2.0 Flash with Google Search grounding enabled (legacy API)")
+                    print(f"✅ Gemini 1.5 Flash with Google Search grounding enabled (legacy API)")
                 except Exception as e2:
                     print(f"⚠️ Could not enable grounding: {e}")
                     print("   ℹ️  Running without grounding - continuing with basic functionality")
                     self.tools = []
         
-        # Define less restrictive safety settings for 2.0
+        # Define less restrictive safety settings for 1.5
         self.safety_settings = [
             {
                 "category": "HARM_CATEGORY_HARASSMENT",

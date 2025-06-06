@@ -120,6 +120,9 @@ class AudioStreamManager:
         self.pre_buffer_duration = PRE_BUFFER_DURATION
         print(f"🎯 Pre-buffer initialized: {PRE_BUFFER_DURATION}s ({PRE_BUFFER_MAX_FRAMES} frames max)")
         
+        # Store last complete audio for interrupt recovery
+        self.last_complete_audio = None
+        
         # Input manager with optimized VAD parameters
         self.input_manager = InputManager(
             input_mode=input_mode,
@@ -359,7 +362,14 @@ class AudioStreamManager:
                             # CRITICAL FIX: Call interrupt detection immediately on speech start
                             if self.interrupt_callback:
                                 print("🚨 [INTERRUPT] Triggering immediate interrupt detection...")
-                                self.interrupt_callback(audio_data)  # Send current frame for interrupt detection
+                                # For interrupt detection, include pre-buffer to ensure we have enough audio
+                                if self.pre_buffer and len(self.vad_audio_buffer) < 10:
+                                    # Create a temporary buffer with pre-buffer + current audio for interrupt
+                                    interrupt_audio = list(self.pre_buffer) + [audio_data]
+                                    interrupt_audio_concat = np.concatenate(interrupt_audio)
+                                    self.interrupt_callback(interrupt_audio_concat)
+                                else:
+                                    self.interrupt_callback(audio_data)  # Send current frame for interrupt detection
                     elif self.is_speech_active:
                         # Still add to buffer even during silence (within tolerance)
                         self.vad_audio_buffer.append(audio_data)
@@ -378,8 +388,11 @@ class AudioStreamManager:
                                 if self.input_callback:
                                     print("📝 [COMPLETE] Sending complete utterance for transcription...")
                                     self.input_callback(complete_audio)
+                                
+                                # Store last audio for potential interrupt recovery
+                                self.last_complete_audio = complete_audio
                             
-                            # Reset state regardless of duration
+                            # Reset state after processing (preserves pre-buffer for interrupts)
                             self.is_speech_active = False
                             self.vad_audio_buffer = []
                             self.speech_start_time = None
