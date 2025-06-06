@@ -11,7 +11,8 @@ from collections import deque
 from .input_manager import InputManager
 from configs.config import (
     INPUT_MODE, VAD_AGGRESSIVENESS, VAD_SPEECH_THRESHOLD, 
-    VAD_SILENCE_THRESHOLD, PUSH_TO_TALK_KEY, CHUNK_SIZE
+    VAD_SILENCE_THRESHOLD, VAD_RING_BUFFER_FRAMES, PUSH_TO_TALK_KEY, CHUNK_SIZE,
+    PRE_BUFFER_DURATION, PRE_BUFFER_MAX_FRAMES
 )
 
 
@@ -95,7 +96,9 @@ class AudioStreamManager:
         
         # Callbacks
         self.input_callback = None
+        self.interrupt_callback = None  # NEW: Separate callback for immediate interrupt detection
         self.output_callback = None
+        self.audio_capture_callback = None  # NEW: Callback to capture actually played audio
         
         # State
         self.is_recording = False
@@ -107,12 +110,17 @@ class AudioStreamManager:
         self.is_speech_active = False
         self.speech_start_time = None
         self.min_speech_duration = 0.5   # Minimum duration in seconds for valid speech  
-        self.max_silence_duration = 1.5  # Maximum silence duration in seconds
+        self.max_silence_duration = 2.5  # Maximum silence duration in seconds - INCREASED to prevent mid-sentence cutoffs
         self.last_speech_time = None
         self.warmup_frames = 0
         self.warmup_duration = int(0.5 * sample_rate / chunk_size)  # 0.5 seconds warmup
         
-        # Input manager
+        # Pre-buffer for capturing audio before VAD detection (1.5 second rolling buffer)
+        self.pre_buffer = deque(maxlen=PRE_BUFFER_MAX_FRAMES)
+        self.pre_buffer_duration = PRE_BUFFER_DURATION
+        print(f"🎯 Pre-buffer initialized: {PRE_BUFFER_DURATION}s ({PRE_BUFFER_MAX_FRAMES} frames max)")
+        
+        # Input manager with optimized VAD parameters
         self.input_manager = InputManager(
             input_mode=input_mode,
             vad_aggressiveness=VAD_AGGRESSIVENESS,
@@ -289,17 +297,19 @@ class AudioStreamManager:
         """Callback when input ends"""
         pass
     
-    def start_input_stream(self, callback: Optional[Callable] = None):
+    def start_input_stream(self, callback: Optional[Callable] = None, interrupt_callback: Optional[Callable] = None):
         """
         Start audio input stream
         
         Args:
-            callback: Optional callback function(audio_chunk) for processing
+            callback: Optional callback function(audio_chunk) for complete utterance processing
+            interrupt_callback: Optional callback for immediate interrupt detection on speech start
         """
         if self.input_stream is not None:
             self.stop_input_stream()
         
         self.input_callback = callback
+        self.interrupt_callback = interrupt_callback
         self.is_recording = True
         
         def stream_callback(in_data, frame_count, time_info, status):
@@ -316,6 +326,13 @@ class AudioStreamManager:
                 audio_data_int16 = (audio_data * 32767).astype(np.int16)
                 
                 if self.input_manager.input_mode == "vad":
+                    # Always add to pre-buffer (rolling buffer of last 1.5 seconds)
+                    # Ensure audio is normalized for Whisper
+                    max_val = np.abs(audio_data).max()
+                    if max_val > 1.0:
+                        audio_data = audio_data / max_val
+                    self.pre_buffer.append(audio_data)
+                    
                     # Process through VAD
                     should_capture = self.input_manager.process_audio(audio_data_int16)
                     current_time = time.time()
@@ -324,33 +341,42 @@ class AudioStreamManager:
                         # Update last speech time
                         self.last_speech_time = current_time
                         
-                        # Ensure audio is normalized for Whisper
-                        max_val = np.abs(audio_data).max()
-                        if max_val > 1.0:
-                            audio_data = audio_data / max_val
-                        
-                        # Add to buffer
+                        # Add to main speech buffer
                         self.vad_audio_buffer.append(audio_data)
                         
-                        # If this is the first frame of speech, trigger start
+                        # If this is the first frame of speech, include pre-buffer content
                         if not self.is_speech_active:
                             self.speech_start_time = current_time
                             self._on_input_start()
                             self.is_speech_active = True
-                            print("🎤 Voice detected")
+                            print(f"🎤 [INTERRUPT] Voice detected! Including {len(self.pre_buffer)} pre-buffer frames ({len(self.pre_buffer) * self.chunk_size / self.sample_rate:.2f}s)")
+                            
+                            # Include pre-buffer at the start of speech buffer
+                            if self.pre_buffer:
+                                self.vad_audio_buffer = list(self.pre_buffer) + self.vad_audio_buffer
+                                print(f"🎯 Pre-buffer added: {len(self.pre_buffer)} frames for complete transcription")
+                            
+                            # CRITICAL FIX: Call interrupt detection immediately on speech start
+                            if self.interrupt_callback:
+                                print("🚨 [INTERRUPT] Triggering immediate interrupt detection...")
+                                self.interrupt_callback(audio_data)  # Send current frame for interrupt detection
                     elif self.is_speech_active:
+                        # Still add to buffer even during silence (within tolerance)
+                        self.vad_audio_buffer.append(audio_data)
+                        
                         # Check if we've exceeded max silence duration
                         if self.last_speech_time and (current_time - self.last_speech_time) >= self.max_silence_duration:
-                            # Speech ended, check duration and process if valid
+                            # Speech ended, check duration and process complete utterance
                             speech_duration = current_time - self.speech_start_time
                             
                             if speech_duration >= self.min_speech_duration and self.vad_audio_buffer:
-                                print("🔇 Voice ended")
+                                print("🔇 [COMPLETE] Voice ended - processing complete utterance")
                                 self._on_input_end()
                                 
-                                # Process the complete utterance
+                                # Process the complete utterance for transcription
                                 complete_audio = np.concatenate(self.vad_audio_buffer)
                                 if self.input_callback:
+                                    print("📝 [COMPLETE] Sending complete utterance for transcription...")
                                     self.input_callback(complete_audio)
                             
                             # Reset state regardless of duration
@@ -358,9 +384,6 @@ class AudioStreamManager:
                             self.vad_audio_buffer = []
                             self.speech_start_time = None
                             self.last_speech_time = None
-                        else:
-                            # Still within silence tolerance, keep buffering
-                            self.vad_audio_buffer.append(audio_data)
                         
                 else:  # push_to_talk
                     # In PTT mode, let the VoiceAssistant handle the audio
@@ -424,6 +447,15 @@ class AudioStreamManager:
                 # Convert to bytes
                 data = audio_chunk.astype(np.int16).tobytes()
                 
+                # Capture played audio for interrupt tracking
+                if self.audio_capture_callback:
+                    try:
+                        # Convert back to float32 for processing
+                        audio_float = audio_chunk.astype(np.float32) / 32767.0
+                        self.audio_capture_callback(audio_float)
+                    except Exception as e:
+                        pass  # Don't let capture errors affect playback
+                
             except queue.Empty:
                 # Return silence if no data
                 data = np.zeros(frame_count, dtype=np.int16).tobytes()
@@ -453,6 +485,10 @@ class AudioStreamManager:
             self.output_stream.close()
             self.output_stream = None
             print("Output stream stopped")
+    
+    def set_audio_capture_callback(self, callback: Optional[Callable]):
+        """Set callback to capture actually played audio"""
+        self.audio_capture_callback = callback
     
     def play_audio(self, audio: np.ndarray, block: bool = False):
         """

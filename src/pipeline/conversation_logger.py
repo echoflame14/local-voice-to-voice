@@ -35,7 +35,7 @@ class ConversationLogger:
         self._save_conversation([])
         return str(self.current_log_file)
     
-    def log_message(self, role: str, content: str):
+    def log_message(self, role: str, content: str, allow_incomplete: bool = False):
         """Log a single message to the current conversation"""
         if not self.current_log_file:
             self.start_new_conversation()
@@ -44,9 +44,23 @@ class ConversationLogger:
         if not content or not content.strip():
             print("⚠️ Skipping empty message")
             return
+        
+        # Additional validation: prevent system prompt text from being logged as user messages
+        if role == "user":
+            system_texts_to_block = [
+                "The following is a conversation between a user and an AI assistant",
+                "[EXTENDED CONTEXTUAL MEMORY FOLLOWS]",
+                "The assistant was speaking when interrupted"
+            ]
             
-        # Check for incomplete sentences
-        if content.strip()[-1] not in '.!?':
+            content_lower = content.strip().lower()
+            for system_text in system_texts_to_block:
+                if system_text.lower() in content_lower:
+                    print(f"⚠️ Blocking system text from being logged as user message: '{content[:50]}...'")
+                    return
+            
+        # Check for incomplete sentences (but allow them for interrupted responses)
+        if not allow_incomplete and content.strip()[-1] not in '.!?':
             print("⚠️ Skipping incomplete message")
             return
             
