@@ -8,6 +8,7 @@ from configs.config import (
     VAD_SPEECH_THRESHOLD,
     VAD_SILENCE_THRESHOLD,
     VAD_FRAME_DURATION_MS,
+    VAD_RING_BUFFER_FRAMES,
     SAMPLE_RATE
 )
 
@@ -65,9 +66,9 @@ class VoiceActivityDetector:
         self.vad = webrtcvad.Vad(aggressiveness)
         
         # Ring buffer for smoothing decisions
-        # If not specified, use 10 frames (~300 ms) which works well with 30ms frames
+        # If not specified, use optimized value from config (reduced for lower latency)
         if ring_buffer_frames is None:
-            ring_buffer_frames = 10
+            ring_buffer_frames = VAD_RING_BUFFER_FRAMES
 
         self.ring_buffer_size = ring_buffer_frames
         self.ring_buffer = deque(maxlen=self.ring_buffer_size)

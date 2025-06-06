@@ -1,11 +1,12 @@
 import google.generativeai as genai
-from typing import List, Dict, Generator
+from typing import List, Dict, Generator, Optional
 import google.generativeai.types as genai_types
 
 class GeminiLLM:
-    """LLM wrapper for Google's Gemini chat models (e.g., gemini-1.5-flash)."""
+    """Enhanced LLM wrapper for Google's Gemini 2.0 Flash with grounding capabilities."""
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-flash-latest", system_prompt: str = None):
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp", system_prompt: str = None, 
+                 enable_grounding: bool = True, grounding_threshold: float = 0.7):
         genai.configure(api_key=api_key)
         self._model_name = model
         try:
@@ -22,8 +23,28 @@ class GeminiLLM:
                 print(f"Error: Could not load Gemini model '{self._model_name}' or '{simplified_model_name}': {e2}")
                 raise
         self.system_prompt = system_prompt or "You are a helpful assistant."
+        self.enable_grounding = enable_grounding
+        self.grounding_threshold = grounding_threshold
         
-        # Define less restrictive safety settings
+        # Configure grounding tools if enabled  
+        self.tools = []
+        if self.enable_grounding:
+            try:
+                # Try the newest API for grounding (updated field name)
+                self.tools = [{"google_search": {}}]
+                print(f"✅ Gemini 2.0 Flash with Google Search grounding enabled (threshold: {self.grounding_threshold})")
+            except Exception as e:
+                try:
+                    # Fallback: Try alternative grounding configurations
+                    from google.generativeai import tools as genai_tools
+                    self.tools = [genai_tools.GoogleSearchRetrieval()]
+                    print(f"✅ Gemini 2.0 Flash with Google Search grounding enabled (legacy API)")
+                except Exception as e2:
+                    print(f"⚠️ Could not enable grounding: {e}")
+                    print("   ℹ️  Running without grounding - continuing with basic functionality")
+                    self.tools = []
+        
+        # Define less restrictive safety settings for 2.0
         self.safety_settings = [
             {
                 "category": "HARM_CATEGORY_HARASSMENT",
@@ -60,7 +81,8 @@ class GeminiLLM:
         model_to_use = genai.GenerativeModel(
             self._model_name,
             system_instruction=(system_prompt or self.system_prompt),
-            safety_settings=self.safety_settings
+            safety_settings=self.safety_settings,
+            tools=self.tools if self.tools else None
         )
         generation_config = genai_types.GenerationConfig(
             max_output_tokens=max_tokens,
@@ -86,6 +108,51 @@ class GeminiLLM:
                  print(f"Underlying response: {e.response}")
             return "I'm sorry, there was an issue generating a response."
 
+    def chat(self, messages: List[Dict[str, str]], max_tokens: int = 4096, temperature: float = 0.7) -> str:
+        """Non-streaming chat method for compatibility with VoiceAssistant"""
+        # Extract system prompt if present
+        current_system_prompt = self.system_prompt
+        history_messages = messages
+
+        # If first message is system message, use it as system instruction
+        if messages and messages[0]["role"] == "system":
+            current_system_prompt = messages[0]["content"]
+            history_messages = messages[1:]  # Remove system message from history
+        
+        # Create model with system instruction and tools
+        model_to_use = genai.GenerativeModel(
+            self._model_name,
+            system_instruction=current_system_prompt,
+            safety_settings=self.safety_settings,
+            tools=self.tools if self.tools else None
+        )
+        
+        # Convert remaining messages to Gemini format
+        gemini_history = self._build_messages(history_messages)
+        
+        generation_config = genai_types.GenerationConfig(
+            max_output_tokens=max_tokens,
+            temperature=temperature
+        )
+        
+        try:
+            response = model_to_use.generate_content(
+                contents=gemini_history,
+                generation_config=generation_config,
+                stream=False
+            )
+            if response.text:
+                return response.text.strip()
+            else:
+                print(f"Warning: Gemini chat() returned no text. Finish reason: {response.candidates[0].finish_reason if response.candidates else 'Unknown'}")
+                return "I'm sorry, I couldn't generate a response."
+        except genai_types.BlockedPromptException as e:
+            print(f"Error: Gemini chat() prompt was blocked. {e}")
+            return "I am unable to respond to that due to safety guidelines."
+        except Exception as e:
+            print(f"Error during Gemini chat(): {e}")
+            return "I'm sorry, there was an issue generating a response."
+
     def stream_chat(self, messages: List[Dict[str, str]], max_tokens: int = 4096, temperature: float = 0.7) -> Generator[str, None, None]:
         # Extract system prompt if present
         current_system_prompt = self.system_prompt
@@ -96,11 +163,12 @@ class GeminiLLM:
             current_system_prompt = messages[0]["content"]
             history_messages = messages[1:]  # Remove system message from history
         
-        # Create model with system instruction
+        # Create model with system instruction and tools
         model_to_use = genai.GenerativeModel(
             self._model_name,
             system_instruction=current_system_prompt,
-            safety_settings=self.safety_settings
+            safety_settings=self.safety_settings,
+            tools=self.tools if self.tools else None
         )
         
         # Convert remaining messages to Gemini format

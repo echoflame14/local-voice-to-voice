@@ -13,13 +13,13 @@ import sys
 import signal
 from pathlib import Path
 import time
-from dotenv import load_dotenv
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from configs import config
 from src.pipeline import VoiceAssistant
+from src.utils.logger import logger
 from colorama import init, Fore, Style
 
 # Initialize colorama for colored terminal output
@@ -60,6 +60,14 @@ def setup_signal_handlers(assistant: VoiceAssistant):
     """Setup signal handlers for graceful shutdown"""
     def signal_handler(signum, frame):
         print_status("Shutting down gracefully...", "warning")
+        
+        # Show performance summary
+        try:
+            from src.utils.performance_monitor import perf_monitor
+            perf_monitor.log_session_summary()
+        except:
+            pass
+            
         assistant.stop()
         sys.exit(0)
     
@@ -199,6 +207,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--use-gemini",
+        action="store_true",
+        help="Use Google Gemini instead of LM Studio"
+    )
+    
+    parser.add_argument(
         "--input-mode",
         choices=["vad", "push_to_talk"],
         default=config.INPUT_MODE,
@@ -223,6 +237,37 @@ Examples:
         "--text-mode",
         action="store_true",
         help="Run in text mode for testing (no voice input)"
+    )
+    
+    parser.add_argument(
+        "--no-grace-period",
+        action="store_true", 
+        help="Disable interrupt grace period for immediate interrupts (allows interrupting right when AI starts speaking)"
+    )
+    
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Enable streaming synthesis for lower latency (experimental)"
+    )
+    
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=3,
+        help="Word chunk size for streaming synthesis (default: 3, lower = faster)"
+    )
+    
+    parser.add_argument(
+        "--high-performance",
+        action="store_true",
+        help="Enable high-performance mode with aggressive optimizations"
+    )
+    
+    parser.add_argument(
+        "--fast-tts",
+        action="store_true",
+        help="Enable ultra-fast TTS synthesis (lower quality but much faster)"
     )
     
     return parser.parse_args()
@@ -257,9 +302,6 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
     
-    # Load environment variables
-    load_dotenv()
-    
     # Load configuration
     config = load_config()
     
@@ -271,11 +313,26 @@ def main():
     
     # Initialize assistant
     try:
-        print_status("Initializing Voice Assistant...", "info")
+        logger.info("Initializing Voice Assistant...")
+        
+        # Determine grace period based on command line option
+        grace_period = 0.0 if args.no_grace_period else config.INTERRUPT_GRACE_PERIOD
+        
+        # Initialize with performance tracking
+        start_init = time.time()
+        
+        # Apply high-performance configuration if requested
+        if args.high_performance:
+            from src.utils.performance_optimizer import create_high_performance_config
+            perf_config = create_high_performance_config()
+            logger.info("🚀 High-performance mode enabled")
+        else:
+            perf_config = {}
         
         assistant = VoiceAssistant(
             whisper_model_size=args.model,
             whisper_device="cpu",  # Always use CPU for Whisper (faster for real-time)
+            use_gemini=args.use_gemini,
             llm_base_url=args.llm_url,
             llm_api_key=config.LM_STUDIO_API_KEY,
             gemini_api_key=config.GEMINI_API_KEY if hasattr(config, 'GEMINI_API_KEY') and config.GEMINI_API_KEY else None,
@@ -283,32 +340,59 @@ def main():
             system_prompt=args.system_prompt or config.SYSTEM_PROMPT,
             voice_reference_path=args.voice or str(config.VOICE_REFERENCE_PATH),
             tts_device=args.device, # Pass device from command line
-            enable_sound_effects=config.ENABLE_SOUND_EFFECTS,
+            enable_sound_effects=perf_config.get('enable_sound_effects', config.ENABLE_SOUND_EFFECTS),
             sound_effect_volume=config.SOUND_EFFECT_VOLUME,
             voice_exaggeration=config.VOICE_EXAGGERATION,
             voice_cfg_weight=config.VOICE_CFG_WEIGHT,
             voice_temperature=config.VOICE_TEMPERATURE,
             sample_rate=config.SAMPLE_RATE,
-            chunk_size=config.CHUNK_SIZE,
+            chunk_size=perf_config.get('chunk_size', config.CHUNK_SIZE),
             min_audio_amplitude=config.MIN_AUDIO_AMPLITUDE,
             # Input mode settings
             input_mode=args.input_mode,
-            vad_aggressiveness=args.vad_aggressiveness,
+            vad_aggressiveness=perf_config.get('vad_aggressiveness', args.vad_aggressiveness),
             vad_speech_threshold=config.VAD_SPEECH_THRESHOLD,
             vad_silence_threshold=config.VAD_SILENCE_THRESHOLD,
             push_to_talk_key=args.ptt_key,
-            enable_interruption_sound=config.ENABLE_INTERRUPTION_SOUND,
-            enable_generation_sound=config.ENABLE_GENERATION_SOUND,
-            max_response_tokens=config.MAX_RESPONSE_TOKENS,
-            llm_temperature=config.LLM_TEMPERATURE
+            enable_interruption_sound=perf_config.get('enable_interruption_sound', config.ENABLE_INTERRUPTION_SOUND),
+            enable_generation_sound=perf_config.get('enable_generation_sound', config.ENABLE_GENERATION_SOUND),
+            max_response_tokens=perf_config.get('max_response_tokens', config.MAX_RESPONSE_TOKENS),
+            llm_temperature=perf_config.get('llm_temperature', config.LLM_TEMPERATURE),
+            auto_summarize_conversations=perf_config.get('auto_summarize_conversations', True),
+            max_history_messages=perf_config.get('max_history_messages', 2000)
         )
+        
+        init_time = time.time() - start_init
+        logger.success(f"Voice Assistant initialized in {init_time:.2f}s")
+        
+        # Enable streaming TTS if requested
+        if args.streaming:
+            from src.pipeline.streaming_tts import patch_voice_assistant_with_streaming
+            assistant = patch_voice_assistant_with_streaming(assistant)
+            logger.info(f"Streaming TTS enabled with chunk size: {args.chunk_size} words")
+        
+        # Apply additional performance optimizations if requested
+        if args.high_performance:
+            from src.utils.performance_optimizer import apply_performance_optimizations
+            apply_performance_optimizations(assistant)
+        
+        # Apply TTS optimizations if requested
+        if args.fast_tts:
+            from src.utils.tts_optimizer import apply_tts_optimizations
+            apply_tts_optimizations(assistant.tts)
+            logger.info("⚡ Ultra-fast TTS optimizations applied")
+        
+        # Override grace period if requested
+        if args.no_grace_period:
+            assistant.synthesis_grace_period = 0.0
+            logger.warning("Grace period disabled - immediate interrupts enabled!")
         
         # Setup callbacks and signal handlers
         setup_callbacks(assistant)
         setup_signal_handlers(assistant)
         
         # Start the assistant
-        print_status("\nStarting Voice Assistant...", "info")
+        logger.info("Starting Voice Assistant...")
         
         # Show appropriate instructions based on input mode
         if args.input_mode == "vad":
@@ -316,6 +400,18 @@ def main():
             print_status(f"VAD Sensitivity: {args.vad_aggressiveness}/3 (higher = more sensitive)", "info")
         else:
             print_status(f"🎮 Push-to-Talk mode - press '{args.ptt_key}' to talk", "success")
+        
+        if args.streaming:
+            print_status("🚀 Streaming TTS enabled for low latency", "success")
+        
+        if args.high_performance:
+            print_status("⚡ High-performance mode active", "success")
+        
+        if args.use_gemini:
+            print_status("🧠 Gemini 2.0 Flash with Google Search grounding enabled", "success")
+        
+        if args.fast_tts:
+            print_status("⚡ Ultra-fast TTS mode active", "success")
         
         print_status("Press Ctrl+C to exit", "info")
         

@@ -6,7 +6,7 @@ from pynput import keyboard
 from .vad import VoiceActivityDetector
 from configs.config import (
     INPUT_MODE, VAD_AGGRESSIVENESS, VAD_SPEECH_THRESHOLD,
-    VAD_SILENCE_THRESHOLD, PUSH_TO_TALK_KEY, SAMPLE_RATE
+    VAD_SILENCE_THRESHOLD, VAD_RING_BUFFER_FRAMES, PUSH_TO_TALK_KEY, SAMPLE_RATE
 )
 
 
@@ -49,7 +49,8 @@ class InputManager:
                 sample_rate=sample_rate,
                 aggressiveness=vad_aggressiveness,
                 speech_threshold=vad_speech_threshold,
-                silence_threshold=vad_silence_threshold
+                silence_threshold=vad_silence_threshold,
+                ring_buffer_frames=VAD_RING_BUFFER_FRAMES  # Use optimized buffer size
             )
         
         # State

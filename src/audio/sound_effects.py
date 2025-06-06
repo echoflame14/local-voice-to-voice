@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Dict, Callable
 import math
 
 
@@ -133,4 +133,141 @@ class SoundEffects:
         # Apply envelope and volume
         sound = sound * envelope * volume
         
-        return sound.astype(np.float32) 
+        return sound.astype(np.float32)
+    
+    @staticmethod
+    def generate_processing_sound(sample_rate: int = 16000, duration: float = 0.2, volume: float = 0.2):
+        """Generate a processing start sound effect"""
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        
+        # Rising tone sequence for processing indication
+        f1 = 600 + 200 * np.sin(2 * np.pi * 3 * t)  # Wobbling frequency
+        sound = np.sin(2 * np.pi * f1 * t)
+        
+        # Apply envelope
+        envelope = np.exp(-2 * t / duration) * (1 - np.exp(-10 * t / duration))
+        sound = sound * envelope * volume
+        
+        return sound.astype(np.float32)
+    
+    @staticmethod
+    def generate_transcription_complete_sound(sample_rate: int = 16000, duration: float = 0.2, volume: float = 0.15):
+        """Generate a quick confirmation sound for transcription completion"""
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        
+        # Quick ascending chirp to indicate completion
+        freq = 800 + 400 * (t / duration)  # Rise from 800Hz to 1200Hz
+        sound = np.sin(2 * np.pi * freq * t)
+        
+        # Sharp attack, quick decay envelope
+        envelope = np.exp(-5 * t / duration) * (1 - np.exp(-30 * t / duration))
+        sound = sound * envelope * volume
+        
+        return sound.astype(np.float32)
+    
+    @staticmethod
+    def generate_contextual_sound(sound_type: str, theme: str = "modern", sample_rate: int = 16000, volume: float = 0.2):
+        """Generate contextual sound effects based on type and theme"""
+        
+        if theme == "modern":
+            if sound_type == "interrupt_gentle":
+                return SoundEffects._generate_modern_interrupt_gentle(sample_rate, volume)
+            elif sound_type == "interrupt_urgent":
+                return SoundEffects._generate_modern_interrupt_urgent(sample_rate, volume)
+            elif sound_type == "completion_success":
+                return SoundEffects._generate_modern_completion_success(sample_rate, volume)
+            elif sound_type == "processing_progress":
+                return SoundEffects._generate_modern_processing_progress(sample_rate, volume)
+            elif sound_type == "transcription_complete":
+                return SoundEffects._generate_modern_transcription_complete(sample_rate, volume)
+        
+        elif theme == "classic":
+            # Classic sounds (simpler tones)
+            if sound_type == "interrupt_gentle":
+                return SoundEffects.generate_beep(frequency=600, duration=0.1, sample_rate=sample_rate, volume=volume)
+            elif sound_type == "completion_success":
+                return SoundEffects.generate_chime(sample_rate=sample_rate, volume=volume)
+            elif sound_type == "transcription_complete":
+                return SoundEffects.generate_beep(frequency=1000, duration=0.1, sample_rate=sample_rate, volume=volume*0.7)
+        
+        elif theme == "minimal":
+            # Minimal sounds (very brief)
+            if sound_type == "interrupt_gentle":
+                return SoundEffects.generate_beep(frequency=800, duration=0.05, sample_rate=sample_rate, volume=volume*0.5)
+            elif sound_type == "completion_success":
+                return SoundEffects.generate_beep(frequency=1000, duration=0.1, sample_rate=sample_rate, volume=volume*0.5)
+            elif sound_type == "transcription_complete":
+                return SoundEffects.generate_beep(frequency=900, duration=0.05, sample_rate=sample_rate, volume=volume*0.3)
+        
+        # Fallback to default sounds
+        return SoundEffects.generate_beep(frequency=800, duration=0.1, sample_rate=sample_rate, volume=volume)
+    
+    @staticmethod
+    def _generate_modern_interrupt_gentle(sample_rate: int, volume: float):
+        """Modern gentle interrupt sound"""
+        t = np.linspace(0, 0.15, int(sample_rate * 0.15))
+        # Soft downward sweep
+        freq = 900 - 300 * t / 0.15
+        sound = np.sin(2 * np.pi * freq * t)
+        # Smooth envelope
+        envelope = np.exp(-3 * t / 0.15) * np.sin(np.pi * t / 0.15)
+        return (sound * envelope * volume).astype(np.float32)
+    
+    @staticmethod
+    def _generate_modern_interrupt_urgent(sample_rate: int, volume: float):
+        """Modern urgent interrupt sound"""
+        t = np.linspace(0, 0.2, int(sample_rate * 0.2))
+        # Quick double beep
+        freq1 = 1200 * (1 + 0.1 * np.sin(2 * np.pi * 20 * t))  # Slight tremolo
+        sound = np.sin(2 * np.pi * freq1 * t)
+        # Sharp envelope with two peaks
+        envelope = np.exp(-8 * t / 0.2) * (1 + 0.5 * np.sin(2 * np.pi * 10 * t))
+        return (sound * envelope * volume * 1.2).astype(np.float32)
+    
+    @staticmethod
+    def _generate_modern_completion_success(sample_rate: int, volume: float):
+        """Modern success completion sound"""
+        t = np.linspace(0, 0.4, int(sample_rate * 0.4))
+        # Rising triad
+        f1, f2, f3 = 523, 659, 784  # C, E, G
+        sound1 = np.sin(2 * np.pi * f1 * t) * np.exp(-t)
+        sound2 = np.sin(2 * np.pi * f2 * t) * np.exp(-t * 0.8) * (t > 0.1)
+        sound3 = np.sin(2 * np.pi * f3 * t) * np.exp(-t * 0.6) * (t > 0.2)
+        sound = (sound1 + sound2 + sound3) / 3
+        return (sound * volume).astype(np.float32)
+    
+    @staticmethod
+    def _generate_modern_processing_progress(sample_rate: int, volume: float):
+        """Modern processing progress indicator"""
+        t = np.linspace(0, 0.1, int(sample_rate * 0.1))
+        # Brief ascending chirp
+        freq = 800 + 400 * t / 0.1
+        sound = np.sin(2 * np.pi * freq * t)
+        envelope = np.sin(np.pi * t / 0.1) ** 2
+        return (sound * envelope * volume * 0.8).astype(np.float32)
+    
+    @staticmethod
+    def _generate_modern_transcription_complete(sample_rate: int, volume: float):
+        """Modern transcription complete sound - subtle confirmation"""
+        t = np.linspace(0, 0.15, int(sample_rate * 0.15))
+        # Quick ascending chirp
+        freq = 900 + 300 * (t / 0.15)  # Rise from 900Hz to 1200Hz
+        sound = np.sin(2 * np.pi * freq * t)
+        # Quick attack, exponential decay
+        envelope = np.exp(-6 * t / 0.15) * (1 - np.exp(-40 * t / 0.15))
+        return (sound * envelope * volume * 0.8).astype(np.float32)  # Slightly quieter
+    
+    @staticmethod
+    def apply_fade(sound: np.ndarray, fade_duration: float = 0.01, sample_rate: int = 16000):
+        """Apply fade-in and fade-out to prevent audio clicks"""
+        fade_samples = int(fade_duration * sample_rate)
+        if fade_samples >= len(sound) // 2:
+            fade_samples = len(sound) // 4
+        
+        if fade_samples > 0:
+            # Fade in
+            sound[:fade_samples] *= np.linspace(0, 1, fade_samples)
+            # Fade out
+            sound[-fade_samples:] *= np.linspace(1, 0, fade_samples)
+        
+        return sound 

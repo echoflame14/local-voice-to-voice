@@ -51,19 +51,15 @@ class ConversationSummarizer:
             ]
             
             print("[SUMMARIZER DEBUG] Sending summarization request to LLM...")
-            # Get summary from LLM
+            # Get summary from LLM using non-streaming method for reliability
             try:
-                summary = []
-                for chunk in self.llm.stream_chat(
+                summary_text = self.llm.chat(
                     messages=prompt,
                     max_tokens=1000,
                     temperature=0.3
-                ):
-                    if chunk:
-                        summary.append(chunk)
-                        print(f"[SUMMARIZER DEBUG] Received chunk: {chunk[:50]}...")
+                ).strip()
                 
-                summary_text = "".join(summary).strip()
+                print(f"[SUMMARIZER DEBUG] Received complete summary: {len(summary_text)} chars")
                 
                 if not summary_text:
                     print("[SUMMARIZER WARNING] Empty summary received")
