@@ -53,6 +53,7 @@ class VoiceAssistant:
         
         # Input mode settings  
         input_mode: str = "vad",  # "vad" or "push_to_talk"
+        input_device: Optional[int] = None,  # Audio input device index
         vad_aggressiveness: int = 1,
         vad_speech_threshold: float = 0.3,
         vad_silence_threshold: float = 0.8,
@@ -136,7 +137,8 @@ class VoiceAssistant:
             chunk_size=vad_chunk_size,
             enable_performance_logging=True,
             list_devices_on_init=False,
-            input_mode=input_mode
+            input_mode=input_mode,
+            input_device=input_device
         )
         
         # State management

@@ -196,6 +196,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--input-device",
+        type=int,
+        help="Audio input device index (use fix_audio_device.py to list devices)"
+    )
+    
+    parser.add_argument(
         "--llm-url",
         default=config.LM_STUDIO_BASE_URL,
         help="LM Studio API URL"
@@ -350,6 +356,7 @@ def main():
             min_audio_amplitude=config.MIN_AUDIO_AMPLITUDE,
             # Input mode settings
             input_mode=args.input_mode,
+            input_device=args.input_device,  # Pass input device from command line
             vad_aggressiveness=perf_config.get('vad_aggressiveness', args.vad_aggressiveness),
             vad_speech_threshold=config.VAD_SPEECH_THRESHOLD,
             vad_silence_threshold=config.VAD_SILENCE_THRESHOLD,
