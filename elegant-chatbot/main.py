@@ -1,98 +1,166 @@
 #!/usr/bin/env python3
 """
-Elegant Chatbot - Main Entry Point
-A simple, elegant voice-to-voice chatbot using GPT-4.1-nano
+Elegant Chatbot - Final interrupt implementation
+Properly handles interrupts with continuous recording
 """
 import sys
-import argparse
+import time
+import numpy as np
 from pathlib import Path
 
-# Add current directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import config
-from core.voice_loop import VoiceAssistant
+from core.audio_interruptible import InterruptibleAudioSystem
+from core.stt_faster import FasterWhisperSTT
+from core.llm import LLMClient
+from core.tts import SimpleTTS
 
 
 def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(
-        description="Elegant Voice Assistant - Simple, powerful, beautiful"
-    )
+    print("=" * 50)
+    print("🎨 Elegant Chatbot (Final Interrupt Support)")
+    print("=" * 50)
     
-    # Core options
-    parser.add_argument(
-        "--no-interrupts", 
-        action="store_true",
-        help="Disable interrupt detection"
-    )
-    parser.add_argument(
-        "--enable-memory",
-        action="store_true", 
-        help="Enable conversation memory"
-    )
-    parser.add_argument(
-        "--no-effects",
-        action="store_true",
-        help="Disable sound effects"
-    )
+    # Enable interrupts and adjust thresholds
+    config.features.enable_interrupts = True
+    config.audio.vad_threshold = 0.3  # Lower threshold for better detection
     
-    # Model options
-    parser.add_argument(
-        "--whisper-model",
-        choices=["tiny", "base", "small", "medium", "large"],
-        help="Whisper model size"
-    )
-    parser.add_argument(
-        "--voice",
-        type=str,
-        help="Path to voice sample for TTS"
-    )
-    
-    # Parse arguments
-    args = parser.parse_args()
-    
-    # Apply command line overrides
-    if args.no_interrupts:
-        config.features.enable_interrupts = False
-    if args.enable_memory:
-        config.features.enable_memory = True
-    if args.no_effects:
-        config.features.enable_effects = False
-    if args.whisper_model:
-        config.model.whisper_model = args.whisper_model
-    if args.voice:
-        config.model.tts_voice = args.voice
-        
-    # Validate configuration
+    # Validate config
     errors = config.validate()
     if errors:
         print("❌ Configuration errors:")
         for error in errors:
             print(f"   - {error}")
-        print("\nPlease set required environment variables.")
         sys.exit(1)
-        
-    # Print configuration
-    print("=" * 50)
-    print("🎨 Elegant Chatbot Configuration")
-    print("=" * 50)
-    print(f"LLM: {config.model.llm_model}")
-    print(f"STT: Whisper {config.model.whisper_model}")
-    print(f"Features:")
-    print(f"  - Interrupts: {'✓' if config.features.enable_interrupts else '✗'}")
-    print(f"  - Memory: {'✓' if config.features.enable_memory else '✗'}")
-    print(f"  - Effects: {'✓' if config.features.enable_effects else '✗'}")
-    print("=" * 50)
-    print()
     
-    # Initialize and run assistant
+    # Initialize components
+    print("\nInitializing components...")
+    
+    audio = InterruptibleAudioSystem(config)
+    
+    print("Loading faster-whisper model...")
+    stt = FasterWhisperSTT(config)
+    stt.load()
+    
+    print("Initializing LLM...")
+    llm = LLMClient(config)
+    llm.warm_up()
+    
+    print("Initializing TTS...")
+    tts = SimpleTTS(config)
+    
+    # Start audio
     try:
-        assistant = VoiceAssistant(config)
-        assistant.run()
+        audio.start()
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        sys.exit(1)
+        print(f"\n❌ Audio initialization failed: {e}")
+        return
+    
+    print("\n🎤 Ready! You can interrupt me while I'm speaking.")
+    print("   Just start talking and I'll stop immediately.")
+    print("   Press Ctrl+C to exit.\n")
+    
+    # Main conversation loop
+    audio.start_recording()
+    speech_buffer = []
+    pre_speech_buffer = []
+    silence_count = 0
+    speaking = False
+    interrupt_audio = []
+    
+    def handle_interrupt(audio_chunks):
+        """Handle interrupt audio"""
+        nonlocal interrupt_audio
+        interrupt_audio = audio_chunks
+    
+    try:
+        while True:
+            # Get audio chunk
+            chunk = audio.get_audio_chunk()
+            if chunk is None:
+                time.sleep(0.01)
+                continue
+            
+            # Skip processing if we're playing (interrupt handler will catch speech)
+            if audio.is_playing:
+                continue
+            
+            # Keep pre-speech buffer
+            pre_speech_buffer.append(chunk)
+            if len(pre_speech_buffer) > 20:  # ~600ms
+                pre_speech_buffer.pop(0)
+            
+            # Check for speech
+            if audio.is_speech(chunk):
+                if not speaking:
+                    print("🎯 Listening...", end="", flush=True)
+                    speaking = True
+                    # Include any interrupt audio first
+                    if interrupt_audio:
+                        speech_buffer = interrupt_audio.copy()
+                        interrupt_audio = []
+                    # Add pre-speech buffer
+                    speech_buffer.extend(pre_speech_buffer)
+                speech_buffer.append(chunk)
+                silence_count = 0
+            else:
+                if speaking:
+                    # Keep recording silence too
+                    speech_buffer.append(chunk)
+                    silence_count += 1
+                    
+                    # After 1.5 seconds of silence, process
+                    if silence_count > 45:
+                        print(" Done!")
+                        
+                        # Process speech
+                        if speech_buffer:
+                            audio_data = np.concatenate(speech_buffer)
+                            duration = len(audio_data) / 16000
+                            print(f"📏 Captured {duration:.1f} seconds")
+                            
+                            print("🔄 Processing...")
+                            text = stt.transcribe(audio_data)
+                            
+                            if text:
+                                print(f"\n👤 You: {text}")
+                                
+                                # Generate response
+                                print("🤖 Thinking...")
+                                response = llm.generate(text)
+                                print(f"💬 Assistant: {response}")
+                                
+                                # Speak response with interrupt support
+                                print("🔊 Speaking... (interrupt me anytime)")
+                                tts_audio = tts.synthesize(response)
+                                
+                                # Play with interrupt detection
+                                was_interrupted = audio.play_audio_interruptible(
+                                    tts_audio, 
+                                    on_interrupt=handle_interrupt
+                                )
+                                
+                                if was_interrupted:
+                                    print(" - Interrupted! Continuing...\n")
+                                else:
+                                    print(" - Complete\n")
+                                    
+                            else:
+                                print("❌ Couldn't understand audio\n")
+                        
+                        # Reset for next input
+                        speech_buffer = []
+                        pre_speech_buffer = []
+                        silence_count = 0
+                        speaking = False
+                        
+                        print("🎤 Ready for next input...")
+                        
+    except KeyboardInterrupt:
+        print("\n\n👋 Goodbye!")
+    finally:
+        audio.close()
 
 
 if __name__ == "__main__":
