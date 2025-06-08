@@ -35,24 +35,29 @@ class OpenAICompatibleLLM:
         """
         print(f"[LLM DEBUG] Initializing OpenAI client with base_url={base_url}")
         
-        # Just check if server is responding
-        try:
-            response = requests.get(base_url + "/health", timeout=5.0)
-            if response.status_code != 200:
-                print(f"[LLM ERROR] Server at {base_url} is not healthy (status {response.status_code})")
-                raise ConnectionError(f"Server not healthy (status {response.status_code})")
-        except Timeout:
-            print(f"[LLM ERROR] Timeout connecting to server at {base_url}")
-            raise ConnectionError("Server connection timeout")
-        except RequestException as e:
-            print(f"[LLM ERROR] Failed to connect to server at {base_url}: {e}")
-            raise ConnectionError(f"Failed to connect to server: {e}")
+        # Skip health check for known APIs
+        if base_url == "https://api.openai.com/v1":
+            print("[LLM DEBUG] Using OpenAI API - skipping health check")
+        else:
+            # Check if local server is responding
+            try:
+                response = requests.get(base_url + "/health", timeout=5.0)
+                if response.status_code != 200:
+                    print(f"[LLM ERROR] Server at {base_url} is not healthy (status {response.status_code})")
+                    raise ConnectionError(f"Server not healthy (status {response.status_code})")
+            except Timeout:
+                print(f"[LLM ERROR] Timeout connecting to server at {base_url}")
+                raise ConnectionError("Server connection timeout")
+            except RequestException as e:
+                print(f"[LLM ERROR] Failed to connect to server at {base_url}: {e}")
+                raise ConnectionError(f"Failed to connect to server: {e}")
         
         self.client = NoModelListOpenAI(
             base_url=base_url,
             api_key=api_key,
             timeout=30.0  # Increased general timeout to 30 seconds
         )
+        self.model = model  # Store the model name
         self.system_prompt = system_prompt or "You are a helpful assistant."
     
     def generate(

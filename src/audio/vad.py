@@ -1,8 +1,19 @@
-import webrtcvad
 import numpy as np
 from collections import deque
 from typing import Tuple, Optional
-import librosa
+import warnings
+
+# Try to import the new Silero/Energy-based VAD implementation
+try:
+    from .vad_silero import VoiceActivityDetector as NewVAD
+    USE_NEW_VAD = True
+    print("✅ Using new VAD implementation (Silero/Energy-based)")
+except ImportError:
+    USE_NEW_VAD = False
+    warnings.warn("New VAD not available, falling back to WebRTC VAD")
+    import webrtcvad
+    import librosa
+
 from configs.config import (
     VAD_AGGRESSIVENESS,
     VAD_SPEECH_THRESHOLD,
@@ -12,9 +23,13 @@ from configs.config import (
     SAMPLE_RATE
 )
 
-
-class VoiceActivityDetector:
-    """Voice Activity Detection using WebRTC VAD
+# If using new VAD, export it directly
+if USE_NEW_VAD:
+    VoiceActivityDetector = NewVAD
+else:
+    # Original WebRTC VAD implementation
+    class VoiceActivityDetector:
+        """Voice Activity Detection using WebRTC VAD
     
     The WebRTC VAD uses a Gaussian Mixture Model (GMM) with:
     - 6 frequency channels

@@ -75,6 +75,7 @@ VAD_SILENCE_THRESHOLD = 0.8  # Silence detection threshold - INCREASED to wait l
 VAD_FRAME_DURATION_MS = 30  # Frame duration in milliseconds (10, 20, or 30)
 VAD_RING_BUFFER_FRAMES = 20  # ENHANCED: Increased for better stability and less cutoffs
 MIN_SPEECH_DURATION_FOR_INTERRUPT = 0.8  # Minimum speech duration before interrupt
+MAX_SILENCE_DURATION = 1.5  # Maximum silence duration in seconds before ending speech
 PUSH_TO_TALK_KEY = "space"  # Keyboard key for push-to-talk
 
 # Pre-buffer settings for complete transcription
@@ -92,7 +93,7 @@ MIN_AUDIO_DURATION_FOR_TRANSCRIPTION = 1.0  # Minimum seconds of audio to transc
 WHISPER_CONFIDENCE_THRESHOLD = 0.3  # Minimum confidence for accepting transcriptions
 
 # Sound Effects - OPTIMIZED FOR PERFORMANCE
-ENABLE_SOUND_EFFECTS = False  # DISABLED for maximum speed
+ENABLE_SOUND_EFFECTS = True  # DISABLED for maximum speed
 SOUND_EFFECT_VOLUME = 0.3  # Volume for sound effects
 ENABLE_INTERRUPTION_SOUND = True  # Keep only essential sounds
 ENABLE_GENERATION_SOUND = False  # DISABLED for speed

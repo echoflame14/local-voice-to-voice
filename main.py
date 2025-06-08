@@ -25,6 +25,17 @@ from colorama import init, Fore, Style
 # Initialize colorama for colored terminal output
 init()
 
+# Check which VAD is being used
+try:
+    from src.audio import vad
+    if hasattr(vad, 'USE_NEW_VAD') and vad.USE_NEW_VAD:
+        print(f"{Fore.GREEN}✅ Using new VAD implementation (Silero/Energy-based){Style.RESET_ALL}")
+    else:
+        print(f"{Fore.YELLOW}⚠️  Using WebRTC VAD (consider installing PyTorch for better VAD){Style.RESET_ALL}")
+except Exception:
+    pass
+
+
 
 def print_banner():
     """Print application banner"""
