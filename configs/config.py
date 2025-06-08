@@ -15,9 +15,12 @@ VOICES_DIR = ROOT_DIR / "voices"
 WHISPER_MODEL_SIZE = "base"  # tiny, base, small, medium, large - REVERTED to base for better stability
 LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
 LM_STUDIO_API_KEY = "not-needed"
+
+# API Keys (optional - only needed if using the respective service)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY not found in environment variables. Please add it to your .env file.")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Gemini settings
 GEMINI_MODEL = "gemini-1.5-flash-latest"  # Gemini 1.5 Flash
 GEMINI_ENABLE_GROUNDING = False  # Disable grounding until library compatibility is resolved
 GEMINI_GROUNDING_THRESHOLD = 0.7  # Confidence threshold for grounding

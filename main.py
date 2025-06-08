@@ -219,6 +219,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--use-openai",
+        action="store_true",
+        help="Use OpenAI API instead of LM Studio"
+    )
+    
+    parser.add_argument(
         "--input-mode",
         choices=["vad", "push_to_talk"],
         default=config.INPUT_MODE,
@@ -335,12 +341,24 @@ def main():
         else:
             perf_config = {}
         
+        # Configure LLM settings based on flags
+        if args.use_openai:
+            llm_base_url = "https://api.openai.com/v1"
+            llm_api_key = config.OPENAI_API_KEY if hasattr(config, 'OPENAI_API_KEY') else None
+            if not llm_api_key:
+                print_status("Error: OPENAI_API_KEY not found in config", "error")
+                sys.exit(1)
+        else:
+            llm_base_url = args.llm_url
+            llm_api_key = config.LM_STUDIO_API_KEY
+        
         assistant = VoiceAssistant(
             whisper_model_size=args.model,
             whisper_device="cpu",  # Always use CPU for Whisper (faster for real-time)
             use_gemini=args.use_gemini,
-            llm_base_url=args.llm_url,
-            llm_api_key=config.LM_STUDIO_API_KEY,
+            llm_base_url=llm_base_url,
+            llm_api_key=llm_api_key,
+            llm_model="gpt-4o-mini" if args.use_openai else None,  # Model for OpenAI API
             gemini_api_key=config.GEMINI_API_KEY if hasattr(config, 'GEMINI_API_KEY') and config.GEMINI_API_KEY else None,
             gemini_model=config.GEMINI_MODEL if hasattr(config, 'GEMINI_MODEL') else "models/gemini-1.5-flash",
             system_prompt=args.system_prompt or config.SYSTEM_PROMPT,
@@ -416,6 +434,8 @@ def main():
         
         if args.use_gemini:
             print_status("🧠 Gemini 2.0 Flash with Google Search grounding enabled", "success")
+        elif args.use_openai:
+            print_status("🤖 Using OpenAI API", "success")
         
         if args.fast_tts:
             print_status("⚡ Ultra-fast TTS mode active", "success")

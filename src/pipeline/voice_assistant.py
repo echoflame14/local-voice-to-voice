@@ -35,6 +35,7 @@ class VoiceAssistant:
         use_gemini: bool = False,  # NEW: Toggle for Gemini vs LM Studio
         llm_base_url: str = "http://localhost:1234/v1",
         llm_api_key: str = "not-needed",
+        llm_model: str = None,  # Model name for OpenAI API
         gemini_api_key: str = None,
         gemini_model: str = "models/gemini-1.5-flash",
         system_prompt: str = None,
@@ -107,11 +108,18 @@ class VoiceAssistant:
             )
         else:
             from ..llm import OpenAICompatibleLLM
-            print("Connecting to LM Studio...")
+            if llm_base_url == "https://api.openai.com/v1":
+                print("Connecting to OpenAI API...")
+                # For OpenAI, use gpt-4o-mini by default if no model specified
+                model_name = llm_model or "gpt-4o-mini"
+            else:
+                print("Connecting to LM Studio...")
+                model_name = None  # LM Studio uses whatever model is loaded
+            
             self.llm = OpenAICompatibleLLM(
                 base_url=llm_base_url,  # Use direct parameter
                 api_key=llm_api_key,    # Use direct parameter
-                model=None,
+                model=model_name,
                 system_prompt=system_prompt or "You are a helpful voice assistant. Keep your responses concise and natural for speech."
             )
         self.gemini_api_key = gemini_api_key

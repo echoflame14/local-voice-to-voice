@@ -352,24 +352,18 @@ class AudioStreamManager:
                             self.speech_start_time = current_time
                             self._on_input_start()
                             self.is_speech_active = True
-                            print(f"🎤 [INTERRUPT] Voice detected! Including {len(self.pre_buffer)} pre-buffer frames ({len(self.pre_buffer) * self.chunk_size / self.sample_rate:.2f}s)")
+                            print(f"🎤 Voice detected! Including {len(self.pre_buffer)} pre-buffer frames ({len(self.pre_buffer) * self.chunk_size / self.sample_rate:.2f}s)")
                             
                             # Include pre-buffer at the start of speech buffer
                             if self.pre_buffer:
                                 self.vad_audio_buffer = list(self.pre_buffer) + self.vad_audio_buffer
                                 print(f"🎯 Pre-buffer added: {len(self.pre_buffer)} frames for complete transcription")
                             
-                            # CRITICAL FIX: Call interrupt detection immediately on speech start
+                            # Call interrupt detection immediately on speech start
                             if self.interrupt_callback:
-                                print("🚨 [INTERRUPT] Triggering immediate interrupt detection...")
-                                # For interrupt detection, include pre-buffer to ensure we have enough audio
-                                if self.pre_buffer and len(self.vad_audio_buffer) < 10:
-                                    # Create a temporary buffer with pre-buffer + current audio for interrupt
-                                    interrupt_audio = list(self.pre_buffer) + [audio_data]
-                                    interrupt_audio_concat = np.concatenate(interrupt_audio)
-                                    self.interrupt_callback(interrupt_audio_concat)
-                                else:
-                                    self.interrupt_callback(audio_data)  # Send current frame for interrupt detection
+                                print("🚨 Checking for interrupt...")
+                                # Simple: just send the current audio chunk
+                                self.interrupt_callback(audio_data)
                     elif self.is_speech_active:
                         # Still add to buffer even during silence (within tolerance)
                         self.vad_audio_buffer.append(audio_data)

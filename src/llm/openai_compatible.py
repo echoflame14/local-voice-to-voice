@@ -90,11 +90,18 @@ class OpenAICompatibleLLM:
             else:
                 print("[LLM DEBUG] Using non-streaming mode")
                 start_time = time.time()
-                response = self.client.chat.completions.create(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
+                # Build request parameters
+                params = {
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+                
+                # Add model if specified (required for OpenAI, optional for LM Studio)
+                if self.model:
+                    params["model"] = self.model
+                
+                response = self.client.chat.completions.create(**params)
                 end_time = time.time()
                 print(f"[LLM DEBUG] Response received in {end_time - start_time:.2f} seconds")
                 return response.choices[0].message.content.strip()
@@ -116,12 +123,19 @@ class OpenAICompatibleLLM:
         """Stream generated text token by token"""
         print("[LLM DEBUG] Starting stream generation...")
         try:
-            stream = self.client.chat.completions.create(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True
-            )
+            # Build request parameters
+            params = {
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True
+            }
+            
+            # Add model if specified (required for OpenAI, optional for LM Studio)
+            if self.model:
+                params["model"] = self.model
+            
+            stream = self.client.chat.completions.create(**params)
             
             print("[LLM DEBUG] Stream created, starting iteration...")
             for chunk in stream:
@@ -156,14 +170,23 @@ class OpenAICompatibleLLM:
             messages = [{"role": "system", "content": self.system_prompt}] + messages
         
         try:
-            print("[LLM DEBUG] Sending chat request to LM Studio...")
-            response = self.client.chat.completions.create(
-                model="local-model",  # LM Studio ignores this but requires it
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            print("[LLM DEBUG] Received response from LM Studio")
+            print(f"[LLM DEBUG] Sending chat request...")
+            # Build request parameters
+            params = {
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
+            # Add model if specified (required for OpenAI, optional for LM Studio)
+            if self.model:
+                params["model"] = self.model
+                print(f"[LLM DEBUG] Using model: {self.model}")
+            else:
+                params["model"] = "local-model"  # LM Studio requires this but ignores it
+            
+            response = self.client.chat.completions.create(**params)
+            print(f"[LLM DEBUG] Received response")
             return response.choices[0].message.content.strip()
         
         except Exception as e:
